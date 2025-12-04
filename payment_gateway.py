@@ -2,11 +2,53 @@ import requests
 import base64
 import json
 import hashlib
+import time
 from datetime import datetime, timedelta
+from functools import wraps
+
+# ==========================================
+# RETRY DECORATOR
+# ==========================================
+
+def retry_api_call(max_attempts=3, delay=2, backoff=2):
+    """Decorator untuk retry API calls dengan exponential backoff"""
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            for attempt in range(max_attempts):
+                try:
+                    return func(*args, **kwargs)
+                except requests.exceptions.Timeout:
+                    if attempt < max_attempts - 1:
+                        wait_time = delay * (backoff ** attempt)
+                        print(f"⏳ Timeout, mencoba ulang dalam {wait_time}s... (percobaan {attempt + 1}/{max_attempts})")
+                        time.sleep(wait_time)
+                        continue
+                    raise
+                except requests.exceptions.ConnectionError:
+                    if attempt < max_attempts - 1:
+                        wait_time = delay * (backoff ** attempt)
+                        print(f"🔌 Koneksi gagal, mencoba ulang dalam {wait_time}s... (percobaan {attempt + 1}/{max_attempts})")
+                        time.sleep(wait_time)
+                        continue
+                    raise
+                except requests.exceptions.RequestException as e:
+                    if attempt < max_attempts - 1:
+                        print(f"❌ Request error: {e}, mencoba ulang...")
+                        time.sleep(delay * (backoff ** attempt))
+                        continue
+                    raise
+            return None
+        return wrapper
+    return decorator
+
+# ==========================================
+# MIDTRANS PAYMENT CLASS
+# ==========================================
 
 class MidtransPayment:
     """
-    Midtrans Payment Gateway Integration
+    Midtrans Payment Gateway Integration dengan error handling & retry logic
     Dokumentasi: https://docs.midtrans.com/reference/createtransaction
     """
 
@@ -16,6 +58,9 @@ class MidtransPayment:
             server_key: Server Key dari Midtrans Dashboard
             is_production: True untuk production, False untuk sandbox
         """
+        if not server_key or server_key == 'YOUR_MIDTRANS_SERVER_KEY':
+            raise ValueError("Server key Midtrans tidak valid")
+        
         self.server_key = server_key
         self.is_production = is_production
 
@@ -37,9 +82,10 @@ class MidtransPayment:
             'Authorization': f'Basic {base64_auth}'
         }
 
+    @retry_api_call(max_attempts=3, delay=2)
     def create_qris_transaction(self, order_id: str, amount: int, customer_details: dict = None):
         """
-        Buat transaksi QRIS
+        Buat transaksi QRIS dengan retry logic
 
         Args:
             order_id: Unique order ID (max 50 chars, alphanumeric + - _ ~)
@@ -48,28 +94,15 @@ class MidtransPayment:
 
         Returns:
             dict: Response dari Midtrans atau None jika error
-
-        Example Response:
-        {
-            "status_code": "201",
-            "status_message": "QRIS transaction is created",
-            "transaction_id": "...",
-            "order_id": "TOPUP-123-...",
-            "gross_amount": "10000.00",
-            "payment_type": "qris",
-            "transaction_time": "2024-12-03 12:00:00",
-            "transaction_status": "pending",
-            "fraud_status": "accept",
-            "actions": [
-                {
-                    "name": "generate-qr-code",
-                    "method": "GET",
-                    "url": "https://api.sandbox.midtrans.com/v2/qris/..."
-                }
-            ]
-        }
         """
         url = f"{self.base_url}/charge"
+
+        # Validasi input
+        if not order_id or len(order_id) > 50:
+            raise ValueError("Order ID tidak valid (max 50 karakter)")
+        
+        if amount < 1000:
+            raise ValueError("Amount minimal Rp 1.000")
 
         # Default customer details jika tidak diberikan
         if not customer_details:
@@ -87,47 +120,49 @@ class MidtransPayment:
             },
             "customer_details": customer_details,
             "qris": {
-                "acquirer": "gopay"  # bisa juga "airpay shopee"
+                "acquirer": "gopay"
             }
         }
 
         try:
-            response = requests.post(url, headers=self.headers, json=payload, timeout=30)
+            response = requests.post(
+                url, 
+                headers=self.headers, 
+                json=payload, 
+                timeout=30
+            )
 
             if response.status_code in [200, 201]:
                 return response.json()
+            elif response.status_code == 400:
+                error_msg = response.json().get('error_messages', ['Unknown error'])[0]
+                print(f"❌ Midtrans validation error: {error_msg}")
+                return None
+            elif response.status_code == 401:
+                print(f"❌ Midtrans authentication error: Periksa server key")
+                return None
             else:
-                print(f"❌ Midtrans Error: {response.status_code}")
+                print(f"❌ Midtrans error: {response.status_code}")
                 print(f"Response: {response.text}")
                 return None
 
+        except requests.exceptions.Timeout:
+            print(f"⏳ Request timeout ke Midtrans")
+            raise
         except Exception as e:
             print(f"❌ Exception saat create transaction: {e}")
             return None
 
+    @retry_api_call(max_attempts=3, delay=1)
     def check_transaction_status(self, order_id: str):
         """
-        Cek status transaksi
+        Cek status transaksi dengan retry logic
 
         Args:
             order_id: Order ID yang ingin dicek
 
         Returns:
             dict: Status transaksi atau None jika error
-
-        Example Response:
-        {
-            "status_code": "200",
-            "status_message": "Success, transaction found",
-            "transaction_id": "...",
-            "order_id": "TOPUP-123-...",
-            "gross_amount": "10000.00",
-            "payment_type": "qris",
-            "transaction_time": "2024-12-03 12:00:00",
-            "transaction_status": "settlement",  # pending/settlement/cancel/deny/expire
-            "fraud_status": "accept",
-            "currency": "IDR"
-        }
         """
         url = f"{self.base_url}/{order_id}/status"
 
@@ -136,15 +171,22 @@ class MidtransPayment:
 
             if response.status_code == 200:
                 return response.json()
+            elif response.status_code == 404:
+                print(f"❌ Transaksi tidak ditemukan: {order_id}")
+                return None
             else:
                 print(f"❌ Status check error: {response.status_code}")
                 print(f"Response: {response.text}")
                 return None
 
+        except requests.exceptions.Timeout:
+            print(f"⏳ Timeout saat check status")
+            raise
         except Exception as e:
             print(f"❌ Exception saat check status: {e}")
             return None
 
+    @retry_api_call(max_attempts=2, delay=1)
     def cancel_transaction(self, order_id: str):
         """
         Cancel transaksi yang masih pending
@@ -171,6 +213,7 @@ class MidtransPayment:
             print(f"❌ Exception saat cancel: {e}")
             return None
 
+    @retry_api_call(max_attempts=2, delay=1)
     def expire_transaction(self, order_id: str):
         """
         Expire transaksi yang masih pending
@@ -213,8 +256,6 @@ def verify_signature(order_id: str, status_code: str, gross_amount: str, server_
 
     Returns:
         bool: True jika signature valid, False jika invalid
-
-    Formula: SHA512(order_id+status_code+gross_amount+ServerKey)
     """
     # Buat hash string
     hash_string = f"{order_id}{status_code}{gross_amount}{server_key}"
@@ -227,7 +268,7 @@ def verify_signature(order_id: str, status_code: str, gross_amount: str, server_
 
 def parse_webhook_notification(notification_json: dict, server_key: str):
     """
-    Parse notifikasi webhook dari Midtrans
+    Parse notifikasi webhook dari Midtrans dengan validasi ketat
 
     Args:
         notification_json: Dict dari request body webhook
@@ -235,23 +276,17 @@ def parse_webhook_notification(notification_json: dict, server_key: str):
 
     Returns:
         dict: Data yang sudah diparse dengan status yang jelas
-
-    Example notification_json:
-    {
-        "transaction_time": "2024-12-03 12:00:00",
-        "transaction_status": "settlement",
-        "transaction_id": "...",
-        "status_message": "midtrans payment notification",
-        "status_code": "200",
-        "signature_key": "...",
-        "payment_type": "qris",
-        "order_id": "TOPUP-123-...",
-        "merchant_id": "...",
-        "gross_amount": "10000.00",
-        "fraud_status": "accept",
-        "currency": "IDR"
-    }
     """
+    # Validasi required fields
+    required_fields = ['order_id', 'transaction_status', 'status_code', 'gross_amount', 'signature_key']
+    missing_fields = [field for field in required_fields if field not in notification_json]
+    
+    if missing_fields:
+        return {
+            'valid': False,
+            'error': f'Missing required fields: {", ".join(missing_fields)}'
+        }
+    
     # Extract fields
     order_id = notification_json.get('order_id')
     transaction_status = notification_json.get('transaction_status')
@@ -272,11 +307,10 @@ def parse_webhook_notification(notification_json: dict, server_key: str):
     if not is_valid:
         return {
             'valid': False,
-            'error': 'Invalid signature - possible security breach!'
+            'error': 'Signature tidak valid - kemungkinan pelanggaran keamanan!'
         }
 
     # Tentukan status final berdasarkan transaction_status
-    # Reference: https://docs.midtrans.com/docs/http-notification-webhooks
     final_status = 'pending'
 
     if transaction_status == 'capture':
@@ -318,81 +352,61 @@ def generate_order_id(user_id: int) -> str:
     """
     Generate unique order ID untuk Midtrans
     Format: TOPUP-{user_id}-{timestamp}
-
-    Args:
-        user_id: Discord user ID
-
-    Returns:
-        str: Unique order ID
     """
     timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
     return f"TOPUP-{user_id}-{timestamp}"
 
 def format_rupiah(amount: int) -> str:
-    """
-    Format integer ke format Rupiah
-
-    Args:
-        amount: Jumlah dalam integer
-
-    Returns:
-        str: Format "Rp 10.000"
-    """
+    """Format integer ke format Rupiah yang mudah dibaca"""
     return f"Rp {amount:,}".replace(',', '.')
 
 def parse_rupiah(text: str) -> int:
-    """
-    Parse text Rupiah ke integer
-
-    Args:
-        text: Text seperti "Rp 10.000" atau "10000"
-
-    Returns:
-        int: Jumlah dalam integer
-    """
-    # Remove Rp, spaces, dots
+    """Parse text Rupiah ke integer"""
+    # Remove Rp, spaces, dots, commas
     clean = text.replace('Rp', '').replace(' ', '').replace('.', '').replace(',', '')
-    return int(clean)
+    try:
+        return int(clean)
+    except ValueError:
+        return 0
 
 # ==========================================
-# TRANSACTION STATUS MAPPING
+# STATUS INFO MAPPING
 # ==========================================
 
 STATUS_MAPPING = {
     'pending': {
         'emoji': '⏳',
-        'description': 'Menunggu pembayaran',
+        'title': 'Menunggu Pembayaran',
+        'description': 'Silakan scan QR code untuk menyelesaikan pembayaran',
         'color': 0xf39c12  # Orange
     },
     'success': {
         'emoji': '✅',
-        'description': 'Pembayaran berhasil',
-        'color': 0x00ff00  # Green
+        'title': 'Pembayaran Berhasil',
+        'description': 'Saldo Anda telah ditambahkan',
+        'color': 0x2ecc71  # Green
     },
     'failed': {
         'emoji': '❌',
-        'description': 'Pembayaran gagal/dibatalkan',
+        'title': 'Pembayaran Gagal',
+        'description': 'Transaksi dibatalkan atau ditolak',
         'color': 0xe74c3c  # Red
     },
     'expired': {
         'emoji': '⌛',
-        'description': 'Transaksi kadaluarsa',
+        'title': 'Transaksi Kadaluarsa',
+        'description': 'Waktu pembayaran telah habis',
         'color': 0x95a5a6  # Gray
     }
 }
 
 def get_status_info(status: str) -> dict:
     """
-    Ambil info status (emoji, description, color) untuk embed Discord
-
-    Args:
-        status: Status transaksi (pending/success/failed/expired)
-
-    Returns:
-        dict: Status info
+    Ambil info status untuk tampilan di Discord embed
     """
     return STATUS_MAPPING.get(status, {
         'emoji': '❓',
-        'description': 'Status tidak diketahui',
+        'title': 'Status Tidak Diketahui',
+        'description': 'Status transaksi tidak dapat ditentukan',
         'color': 0x95a5a6
     })

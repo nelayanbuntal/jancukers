@@ -258,7 +258,7 @@ def run_redeem_process(code_file, email, password, region_input, android_choice,
     for raw_code in codes:
         code_value = raw_code.replace("-", "").strip()
         spinner_index = 0
-        log_output.append(f"\n=== Memproses kode: {raw_code} ===")
+        #log_output.append(f"\n=== Memproses kode: {raw_code} ===")
         region_index = 0
 
         while True:

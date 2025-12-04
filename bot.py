@@ -5,9 +5,8 @@ import asyncio
 import random
 import os
 from datetime import datetime
-from admin_commands import setup_admin_commands
 
-# Import modules kita 
+# Import modules kita
 from redeem_core import run_redeem_process
 import config
 from database import (
@@ -76,36 +75,14 @@ async def login_worker():
                 user_id=user_id
             )
 
-        # Jalankan redeem di thread executor
-        result = await loop.run_in_executor(None, login_task)
-        
-        # Split message jika terlalu panjang (Discord limit: 2000 chars)
-        max_length = 1900  # Beri margin untuk markdown
-        result_text = f"✅ Redeem selesai:\n```\n{result}\n```"
-        
-        if len(result_text) <= 2000:
-            await channel.send(result_text)
-        else:
-            # Split menjadi beberapa pesan
-            await channel.send("✅ Redeem selesai! (Output panjang, dibagi beberapa pesan)")
+        try:
+            # Jalankan redeem di thread executor
+            result = await loop.run_in_executor(None, login_task)
             
-            # Split result by lines
-            lines = result.split('\n')
-            current_chunk = "```\n"
+            # Kirim notifikasi completion SEDERHANA dulu
+            await channel.send("✅ **Proses redeem selesai!**")
             
-            for line in lines:
-                if len(current_chunk) + len(line) + 5 > max_length:  # +5 untuk \n dan ```
-                    current_chunk += "```"
-                    await channel.send(current_chunk)
-                    current_chunk = "```\n" + line + "\n"
-                else:
-                    current_chunk += line + "\n"
-            
-            if current_chunk != "```\n":
-                current_chunk += "```"
-                await channel.send(current_chunk)
-            
-            # Kirim summary
+            # Hitung statistik dari file
             success_file = f"success_{user_id}.txt"
             invalid_file = f"invalid_{user_id}.txt"
             
@@ -113,24 +90,50 @@ async def login_worker():
             invalid_count = 0
             
             if os.path.exists(success_file):
-                with open(success_file, 'r') as f:
+                with open(success_file, 'r', encoding='utf-8') as f:
                     success_count = len([l for l in f.readlines() if l.strip()])
             
             if os.path.exists(invalid_file):
-                with open(invalid_file, 'r') as f:
+                with open(invalid_file, 'r', encoding='utf-8') as f:
                     invalid_count = len([l for l in f.readlines() if l.strip()])
             
+            # Kirim summary embed
             summary_embed = discord.Embed(
                 title="📊 Ringkasan Redeem",
-                color=0x00ff00
+                description="Berikut hasil proses redeem kode Anda:",
+                color=0x00ff00 if success_count > 0 else 0xe74c3c
             )
-            summary_embed.add_field(name="✅ Success", value=str(success_count), inline=True)
-            summary_embed.add_field(name="❌ Invalid", value=str(invalid_count), inline=True)
-            summary_embed.add_field(name="📁 File Log", value=f"`{success_file}` | `{invalid_file}`", inline=False)
+            summary_embed.add_field(name="✅ Berhasil", value=str(success_count), inline=True)
+            summary_embed.add_field(name="❌ Invalid/Gagal", value=str(invalid_count), inline=True)
+            summary_embed.add_field(name="📁 File Log", value=f"`{success_file}`\n`{invalid_file}`", inline=False)
+            
+            if success_count > 0:
+                summary_embed.set_footer(text="✅ Kode berhasil di-redeem telah tersimpan")
+            else:
+                summary_embed.set_footer(text="⚠️ Tidak ada kode yang berhasil di-redeem")
             
             await channel.send(embed=summary_embed)
-
-        login_queue.task_done()
+            
+            # Kirim detail log hanya jika tidak terlalu panjang
+            if result and len(result) > 0:
+                # Split result by lines untuk detail log
+                result_preview = result[:1500]  # Ambil 1500 karakter pertama
+                if len(result) > 1500:
+                    result_preview += "\n... (log terlalu panjang, lihat summary di atas)"
+                
+                try:
+                    await channel.send(f"```\n{result_preview}\n```")
+                except discord.HTTPException as e:
+                    # Jika masih terlalu panjang, skip detail log
+                    await channel.send("ℹ️ Detail log terlalu panjang. Silakan cek summary di atas.")
+        
+        except Exception as e:
+            # Error handling
+            await channel.send(f"❌ **Error saat proses redeem:**\n```\n{str(e)}\n```")
+            print(f"Error in login_worker: {e}")
+        
+        finally:
+            login_queue.task_done()
 
 # ==============================
 # Fungsi Live Log Update
@@ -532,7 +535,8 @@ async def on_message(message: discord.Message):
                 f"Jumlah kode: **{code_count}**\n"
                 f"Biaya: **{format_rupiah(total_cost)}**\n"
                 f"Saldo tersisa: **{format_rupiah(new_balance)}**\n\n"
-                f"⚙️ Task masuk antrian. Mohon tunggu..."
+                f"⚙️ Task masuk antrian. Mohon tunggu...\n"
+                f"📊 Status: Login dan redeem akan dimulai segera"
             )
 
     await bot.process_commands(message)
@@ -624,7 +628,7 @@ async def commands_list(ctx):
 @bot.event
 async def on_ready():
     print(f"✅ Bot login sebagai {bot.user}")
-    setup_admin_commands(bot) # untuk mengaktifkan command admin
+    
     # Start webhook server
     webhook_server.set_discord_bot(bot)
     webhook_server.start_webhook_server()
