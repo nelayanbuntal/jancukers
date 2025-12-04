@@ -1,0 +1,24 @@
+Task exception was never retrieved
+future: <Task finished name='Task-4' coro=<login_worker() done, defined at /workspaces/242656431/project/bot.py:53> exception=HTTPException('400 Bad Request (error code: 50035): Invalid Form Body\nIn content: Must be 4000 or fewer in length.')>
+Traceback (most recent call last):
+  File "/workspaces/242656431/project/bot.py", line 80, in login_worker
+    await channel.send(f"✅ Redeem selesai:\n```\n{result}\n```")
+  File "/home/ubuntu/.local/lib/python3.13/site-packages/discord/abc.py", line 1703, in send
+    data = await state.http.send_message(channel.id, params=params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/ubuntu/.local/lib/python3.13/site-packages/discord/http.py", line 773, in request
+    raise HTTPException(response, data)
+discord.errors.HTTPException: 400 Bad Request (error code: 50035): Invalid Form Body
+In content: Must be 4000 or fewer in length.
+Task exception was never retrieved
+future: <Task finished name='Task-5' coro=<login_worker() done, defined at /workspaces/242656431/project/bot.py:53> exception=HTTPException('400 Bad Request (error code: 50035): Invalid Form Body\nIn content: Must be 4000 or fewer in length.')>
+Traceback (most recent call last):
+  File "/workspaces/242656431/project/bot.py", line 80, in login_worker
+    await channel.send(f"✅ Redeem selesai:\n```\n{result}\n```")
+  File "/home/ubuntu/.local/lib/python3.13/site-packages/discord/abc.py", line 1703, in send
+    data = await state.http.send_message(channel.id, params=params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/ubuntu/.local/lib/python3.13/site-packages/discord/http.py", line 773, in request
+    raise HTTPException(response, data)
+discord.errors.HTTPException: 400 Bad Request (error code: 50035): Invalid Form Body
+In content: Must be 4000 or fewer in length.

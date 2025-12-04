@@ -1,0 +1,21 @@
+# Discord Bot
+discord.py>=2.3.2
+
+# Web Framework untuk Webhook
+Flask>=3.0.0
+
+# Database (jika ingin upgrade ke PostgreSQL)
+# psycopg2-binary>=2.9.9
+
+# HTTP Requests
+requests>=2.31.0
+
+# Environment Variables
+python-dotenv>=1.0.0
+
+# Selenium & Web Automation
+selenium>=4.15.0
+undetected-chromedriver>=3.5.4
+
+# Utilities
+asyncio
