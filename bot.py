@@ -5,8 +5,9 @@ import asyncio
 import random
 import os
 from datetime import datetime
+import traceback
 
-# Import modules kita
+# Import modules
 from redeem_core import run_redeem_process
 import config
 from database import (
@@ -25,144 +26,277 @@ intents.message_content = True
 intents.members = True
 
 # ==============================
-# Multi-user data & active channel tracking
+# Global State Management
 # ==============================
 user_data = {}          # user_id -> parameter data
 active_channels = {}    # user_id -> channel_id
+live_logs = {}          # channel_id -> list of log lines
+live_panel_message = {} # channel_id -> discord.Message
+last_update = {}        # channel_id -> timestamp
 
 # ==============================
-# Live log panel
-# ==============================
-live_logs = {}            # channel_id -> list of log lines
-live_panel_message = {}   # channel_id -> discord.Message
-last_update = {}          # channel_id -> timestamp terakhir update
-
-# ==============================
-# Queue login task
+# Queue & Worker Management
 # ==============================
 login_queue = asyncio.Queue()
+worker_status = {}      # worker_id -> status
 
 # ==============================
-# Midtrans instance
+# Payment Gateway
 # ==============================
-midtrans = MidtransPayment(
-    server_key=config.MIDTRANS_SERVER_KEY,
-    is_production=config.MIDTRANS_IS_PRODUCTION
-)
+try:
+    midtrans = MidtransPayment(
+        server_key=config.MIDTRANS_SERVER_KEY,
+        is_production=config.MIDTRANS_IS_PRODUCTION
+    )
+except Exception as e:
+    print(f"⚠️ Midtrans initialization warning: {e}")
+    midtrans = None
 
-async def login_worker():
-    """Worker untuk proses redeem"""
-    while True:
-        task = await login_queue.get()
-        user_id = task["user_id"]
-        email = task["email"]
-        password = task["password"]
-        channel = task["channel"]
-        android_choice = task["android_choice"]
-        region = task["region"]
-        code_file = task["code_file"]
-
-        loop = asyncio.get_event_loop()
-
-        def login_task():
-            return run_redeem_process(
-                code_file=code_file,
-                email=email,
-                password=password,
-                region_input=region,
-                android_choice=android_choice,
-                progress_callback=make_progress_callback(channel),
-                user_id=user_id
-            )
-
-        try:
-            # Jalankan redeem di thread executor
-            result = await loop.run_in_executor(None, login_task)
-            
-            # Kirim notifikasi completion SEDERHANA dulu
-            await channel.send("✅ **Proses redeem selesai!**")
-            
-            # Hitung statistik dari file
-            success_file = f"success_{user_id}.txt"
-            invalid_file = f"invalid_{user_id}.txt"
-            
-            success_count = 0
-            invalid_count = 0
-            
-            if os.path.exists(success_file):
-                with open(success_file, 'r', encoding='utf-8') as f:
-                    success_count = len([l for l in f.readlines() if l.strip()])
-            
-            if os.path.exists(invalid_file):
-                with open(invalid_file, 'r', encoding='utf-8') as f:
-                    invalid_count = len([l for l in f.readlines() if l.strip()])
-            
-            # Kirim summary embed
-            summary_embed = discord.Embed(
-                title="📊 Ringkasan Redeem",
-                description="Berikut hasil proses redeem kode Anda:",
-                color=0x00ff00 if success_count > 0 else 0xe74c3c
-            )
-            summary_embed.add_field(name="✅ Berhasil", value=str(success_count), inline=True)
-            summary_embed.add_field(name="❌ Invalid/Gagal", value=str(invalid_count), inline=True)
-            summary_embed.add_field(name="📁 File Log", value=f"`{success_file}`\n`{invalid_file}`", inline=False)
-            
-            if success_count > 0:
-                summary_embed.set_footer(text="✅ Kode berhasil di-redeem telah tersimpan")
-            else:
-                summary_embed.set_footer(text="⚠️ Tidak ada kode yang berhasil di-redeem")
-            
-            await channel.send(embed=summary_embed)
-            
-            # Kirim detail log hanya jika tidak terlalu panjang
-            if result and len(result) > 0:
-                # Split result by lines untuk detail log
-                result_preview = result[:1500]  # Ambil 1500 karakter pertama
-                if len(result) > 1500:
-                    result_preview += "\n... (log terlalu panjang, lihat summary di atas)"
-                
+# ==============================
+# Retry Decorator untuk Bot Operations
+# ==============================
+def retry_async(max_attempts=3, delay=2, backoff=2):
+    """Decorator untuk retry async operations"""
+    def decorator(func):
+        async def wrapper(*args, **kwargs):
+            for attempt in range(max_attempts):
                 try:
-                    await channel.send(f"```\n{result_preview}\n```")
+                    return await func(*args, **kwargs)
                 except discord.HTTPException as e:
-                    # Jika masih terlalu panjang, skip detail log
-                    await channel.send("ℹ️ Detail log terlalu panjang. Silakan cek summary di atas.")
-        
-        except Exception as e:
-            # Error handling
-            await channel.send(f"❌ **Error saat proses redeem:**\n```\n{str(e)}\n```")
-            print(f"Error in login_worker: {e}")
-        
-        finally:
-            login_queue.task_done()
+                    if attempt < max_attempts - 1:
+                        wait_time = delay * (backoff ** attempt)
+                        print(f"⚠️ Discord API error, retrying in {wait_time}s: {e}")
+                        await asyncio.sleep(wait_time)
+                        continue
+                    raise
+                except Exception as e:
+                    if attempt < max_attempts - 1:
+                        print(f"⚠️ Error in {func.__name__}, retrying: {e}")
+                        await asyncio.sleep(delay * (backoff ** attempt))
+                        continue
+                    raise
+        return wrapper
+    return decorator
 
 # ==============================
-# Fungsi Live Log Update
+# Login Worker dengan Error Recovery
+# ==============================
+async def login_worker(worker_id: int):
+    """Worker untuk proses redeem dengan comprehensive error handling"""
+    worker_status[worker_id] = "idle"
+    
+    while True:
+        try:
+            task = await login_queue.get()
+            worker_status[worker_id] = "processing"
+            
+            user_id = task["user_id"]
+            email = task["email"]
+            password = task["password"]
+            channel = task["channel"]
+            android_choice = task["android_choice"]
+            region = task["region"]
+            code_file = task["code_file"]
+
+            loop = asyncio.get_event_loop()
+
+            def login_task():
+                return run_redeem_process(
+                    code_file=code_file,
+                    email=email,
+                    password=password,
+                    region_input=region,
+                    android_choice=android_choice,
+                    progress_callback=make_progress_callback(channel),
+                    user_id=user_id
+                )
+
+            try:
+                # Jalankan redeem dengan timeout protection
+                result = await asyncio.wait_for(
+                    loop.run_in_executor(None, login_task),
+                    timeout=1800  # 30 menit timeout
+                )
+                
+                # Kirim completion message
+                await safe_send_completion(channel, user_id, result)
+                
+            except asyncio.TimeoutError:
+                await safe_send(channel, 
+                    "⏱️ **Proses redeem timeout**\n\n"
+                    "Proses melebihi batas waktu yang ditentukan. "
+                    "Silakan coba lagi dengan kode yang lebih sedikit atau hubungi admin."
+                )
+                
+            except Exception as e:
+                error_msg = str(e)
+                print(f"❌ Worker {worker_id} error: {error_msg}")
+                print(traceback.format_exc())
+                
+                await safe_send(channel,
+                    "❌ **Terjadi Kesalahan**\n\n"
+                    "Maaf, terjadi kesalahan saat memproses redeem Anda. "
+                    "Tim kami telah menerima laporan error ini.\n\n"
+                    "💡 Silakan coba lagi dalam beberapa saat atau hubungi admin untuk bantuan."
+                )
+            
+            finally:
+                # Cleanup
+                try:
+                    if os.path.exists(code_file):
+                        os.remove(code_file)
+                except:
+                    pass
+                
+                login_queue.task_done()
+                worker_status[worker_id] = "idle"
+                
+        except Exception as e:
+            print(f"❌ Critical error in worker {worker_id}: {e}")
+            print(traceback.format_exc())
+            worker_status[worker_id] = "error"
+            await asyncio.sleep(5)  # Cooldown sebelum retry
+            worker_status[worker_id] = "idle"
+
+# ==============================
+# Safe Message Sending
+# ==============================
+@retry_async(max_attempts=3)
+async def safe_send(channel, content=None, embed=None, view=None):
+    """Send message with retry logic"""
+    try:
+        return await channel.send(content=content, embed=embed, view=view)
+    except discord.Forbidden:
+        print(f"⚠️ Cannot send message to channel {channel.id} (no permission)")
+        return None
+    except discord.HTTPException as e:
+        print(f"⚠️ HTTP error sending message: {e}")
+        raise
+
+async def safe_send_completion(channel, user_id, result):
+    """Send completion message with statistics"""
+    try:
+        # Hitung statistik
+        success_file = f"success_{user_id}.txt"
+        invalid_file = f"invalid_{user_id}.txt"
+        
+        success_count = 0
+        invalid_count = 0
+        
+        if os.path.exists(success_file):
+            with open(success_file, 'r', encoding='utf-8') as f:
+                success_count = len([l for l in f.readlines() if l.strip()])
+        
+        if os.path.exists(invalid_file):
+            with open(invalid_file, 'r', encoding='utf-8') as f:
+                invalid_count = len([l for l in f.readlines() if l.strip()])
+        
+        # Header message
+        await safe_send(channel, "✅ **Proses Redeem Selesai**")
+        
+        # Summary embed
+        if success_count > 0:
+            color = 0x2ecc71  # Green
+            status_emoji = "🎉"
+            status_text = "Berhasil"
+        elif invalid_count > 0:
+            color = 0xe67e22  # Orange
+            status_emoji = "⚠️"
+            status_text = "Selesai dengan Peringatan"
+        else:
+            color = 0xe74c3c  # Red
+            status_emoji = "❌"
+            status_text = "Tidak Ada Kode Valid"
+        
+        embed = discord.Embed(
+            title=f"{status_emoji} Hasil Redeem Code",
+            description="Berikut adalah ringkasan proses redeem Anda:",
+            color=color
+        )
+        
+        embed.add_field(
+            name="✅ Kode Berhasil", 
+            value=f"**{success_count}** kode", 
+            inline=True
+        )
+        embed.add_field(
+            name="❌ Kode Invalid/Gagal", 
+            value=f"**{invalid_count}** kode", 
+            inline=True
+        )
+        embed.add_field(
+            name="📁 File Log",
+            value=f"`{success_file}`\n`{invalid_file}`",
+            inline=False
+        )
+        
+        if success_count > 0:
+            embed.add_field(
+                name="💡 Informasi",
+                value="Kode yang berhasil telah tersimpan dan siap digunakan.",
+                inline=False
+            )
+        else:
+            embed.add_field(
+                name="💡 Saran",
+                value="Pastikan kode yang Anda masukkan valid dan belum pernah digunakan.",
+                inline=False
+            )
+        
+        embed.set_footer(text=f"Status: {status_text} • {datetime.now().strftime('%d/%m/%Y %H:%M')}")
+        
+        await safe_send(channel, embed=embed)
+        
+    except Exception as e:
+        print(f"⚠️ Error sending completion: {e}")
+        # Fallback simple message
+        await safe_send(channel, "✅ Proses redeem selesai. Silakan cek file log untuk detail.")
+
+# ==============================
+# Live Log Update
 # ==============================
 async def update_live_panel(channel):
-    """Update live log panel di channel"""
-    if channel.id not in live_panel_message:
-        msg = await channel.send(embed=discord.Embed(title="Live Redeem Log", description="Memuat...", color=0x00ff00))
-        live_panel_message[channel.id] = msg
-
-    last = last_update.get(channel.id, 0)
-    now = asyncio.get_event_loop().time()
-    if now - last < 5:
-        return  # throttling 5 detik
-
-    log_lines = live_logs.get(channel.id, [])
-    embed = discord.Embed(
-        title="Live Redeem Log",
-        description="\n".join(log_lines[-10:]) if log_lines else "Tidak ada log saat ini.",
-        color=0x00ff00
-    )
+    """Update live log panel dengan throttling"""
     try:
-        await live_panel_message[channel.id].edit(embed=embed)
-    except discord.HTTPException:
-        pass
-    last_update[channel.id] = now
+        if channel.id not in live_panel_message:
+            msg = await safe_send(channel, embed=discord.Embed(
+                title="📊 Status Redeem",
+                description="Memulai proses...",
+                color=0x3498db
+            ))
+            if msg:
+                live_panel_message[channel.id] = msg
+
+        # Throttling
+        last = last_update.get(channel.id, 0)
+        now = asyncio.get_event_loop().time()
+        if now - last < 3:  # Update setiap 3 detik
+            return
+
+        log_lines = live_logs.get(channel.id, [])
+        recent_logs = log_lines[-8:] if log_lines else ["Menunggu proses..."]
+        
+        embed = discord.Embed(
+            title="📊 Status Redeem",
+            description="\n".join(recent_logs),
+            color=0x3498db
+        )
+        embed.set_footer(text="Log diperbarui setiap beberapa detik")
+        
+        if channel.id in live_panel_message:
+            await live_panel_message[channel.id].edit(embed=embed)
+        
+        last_update[channel.id] = now
+        
+    except discord.NotFound:
+        # Message deleted, remove from tracking
+        if channel.id in live_panel_message:
+            del live_panel_message[channel.id]
+    except Exception as e:
+        print(f"⚠️ Error updating live panel: {e}")
 
 def make_progress_callback(channel):
-    """Callback untuk update progress redeem"""
+    """Callback untuk update progress"""
     def progress_callback(key, text):
         if channel.id not in live_logs:
             live_logs[channel.id] = []
@@ -171,34 +305,41 @@ def make_progress_callback(channel):
     return progress_callback
 
 # ==============================
-# Bot class dengan setup_hook
+# Bot Setup
 # ==============================
 class MyBot(commands.Bot):
     async def setup_hook(self):
-        # Inisialisasi database
-        init_database()
-        
-        # Start login workers
-        for _ in range(config.MAX_LOGIN_WORKERS):
-            asyncio.create_task(login_worker())
-        
-        # Tambahkan persistent views
-        self.add_view(MainMenuView())
-        self.add_view(StartFormButton())
-        
-        print("✅ Bot setup complete")
+        """Initialize bot components"""
+        try:
+            # Database
+            init_database()
+            print("✅ Database initialized")
+            
+            # Start workers
+            for i in range(config.MAX_LOGIN_WORKERS):
+                asyncio.create_task(login_worker(i))
+            print(f"✅ Started {config.MAX_LOGIN_WORKERS} workers")
+            
+            # Add persistent views
+            self.add_view(MainMenuView())
+            self.add_view(StartFormButton())
+            print("✅ Persistent views added")
+            
+        except Exception as e:
+            print(f"❌ Setup error: {e}")
+            print(traceback.format_exc())
 
 bot = MyBot(command_prefix="!", intents=intents)
 
 # ==============================
-# Main Menu View dengan Buttons
+# Main Menu View
 # ==============================
 class MainMenuView(ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
     @ui.button(
-        label="🟩 Start Redeem",
+        label="🎮 Mulai Redeem",
         style=discord.ButtonStyle.green,
         custom_id="start_redeem_button"
     )
@@ -206,74 +347,120 @@ class MainMenuView(ui.View):
         """Buat channel privat untuk redeem"""
         user = interaction.user
 
-        # CEK SALDO TERLEBIH DAHULU
+        # Cek saldo
         user_balance = get_balance(user.id)
-        min_balance = config.REDEEM_COST_PER_CODE  # Minimal 1 kode
+        min_balance = config.REDEEM_COST_PER_CODE
         
         if user_balance < min_balance:
-            return await interaction.response.send_message(
-                f"❌ **Saldo tidak cukup untuk redeem!**\n\n"
-                f"Saldo kamu: **{format_rupiah(user_balance)}**\n"
-                f"Minimal saldo: **{format_rupiah(min_balance)}** (untuk 1 kode)\n\n"
-                f"💡 Silakan topup terlebih dahulu dengan klik tombol **💰 Topup Saldo**",
-                ephemeral=True
+            shortage = min_balance - user_balance
+            embed = discord.Embed(
+                title="💳 Saldo Tidak Mencukupi",
+                description="Maaf, saldo Anda belum cukup untuk memulai redeem.",
+                color=0xe74c3c
             )
+            embed.add_field(
+                name="Saldo Anda", 
+                value=format_rupiah(user_balance), 
+                inline=True
+            )
+            embed.add_field(
+                name="Minimal Saldo", 
+                value=format_rupiah(min_balance), 
+                inline=True
+            )
+            embed.add_field(
+                name="💡 Cara Top Up",
+                value="Klik tombol **💰 Top Up Saldo** di menu utama untuk mengisi saldo.",
+                inline=False
+            )
+            return await interaction.response.send_message(embed=embed, ephemeral=True)
 
+        # Cek channel aktif
         if user.id in active_channels:
             ch_id = active_channels[user.id]
             existing_channel = interaction.guild.get_channel(ch_id)
             if existing_channel:
                 return await interaction.response.send_message(
-                    f"❌ Kamu sudah punya channel aktif: {existing_channel.mention}",
+                    f"ℹ️ Anda sudah memiliki sesi aktif di {existing_channel.mention}",
                     ephemeral=True
                 )
             else:
                 active_channels.pop(user.id)
 
-        guild = interaction.guild
-        category = discord.utils.get(guild.categories, name="Redeem Tools")
-        if category is None:
-            category = await guild.create_category("Redeem Tools")
+        try:
+            guild = interaction.guild
+            category = discord.utils.get(guild.categories, name="🎮 Redeem Sessions")
+            if category is None:
+                category = await guild.create_category("🎮 Redeem Sessions")
 
-        rand = random.randint(1000, 9999)
-        channel_name = f"redeem-{rand}"
+            rand = random.randint(1000, 9999)
+            channel_name = f"redeem-{user.name[:10]}-{rand}"
 
-        overwrites = {
-            guild.default_role: discord.PermissionOverwrite(read_messages=False),
-            user: discord.PermissionOverwrite(read_messages=True, send_messages=True),
-            guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True),
-        }
+            overwrites = {
+                guild.default_role: discord.PermissionOverwrite(read_messages=False),
+                user: discord.PermissionOverwrite(read_messages=True, send_messages=True),
+                guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True),
+            }
 
-        admin_role = discord.utils.get(guild.roles, name=config.ADMIN_ROLE_NAME)
-        if admin_role:
-            overwrites[admin_role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
+            admin_role = discord.utils.get(guild.roles, name=config.ADMIN_ROLE_NAME)
+            if admin_role:
+                overwrites[admin_role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
 
-        redeem_channel = await guild.create_text_channel(
-            channel_name, overwrites=overwrites, category=category
-        )
+            redeem_channel = await guild.create_text_channel(
+                channel_name, overwrites=overwrites, category=category
+            )
 
-        active_channels[user.id] = redeem_channel.id
+            active_channels[user.id] = redeem_channel.id
 
-        await interaction.response.send_message(
-            f"📩 Channel privat telah dibuat: {redeem_channel.mention}", ephemeral=True
-        )
+            await interaction.response.send_message(
+                f"✅ Channel privat berhasil dibuat: {redeem_channel.mention}",
+                ephemeral=True
+            )
 
-        await redeem_channel.send(
-            f"👋 Halo {user.mention}! Klik tombol di bawah untuk mengisi parameter redeem.",
-            view=StartFormButton()
-        )
+            welcome_embed = discord.Embed(
+                title="👋 Selamat Datang di Sesi Redeem",
+                description=f"Halo {user.mention}! Mari kita mulai proses redeem code Anda.",
+                color=0x3498db
+            )
+            welcome_embed.add_field(
+                name="📋 Langkah Selanjutnya",
+                value="Klik tombol **Input Parameter** di bawah untuk mengisi informasi akun Anda.",
+                inline=False
+            )
+            welcome_embed.add_field(
+                name="💡 Tips",
+                value="• Pastikan informasi akun sudah benar\n"
+                      "• Siapkan file `code.txt` berisi kode redeem\n"
+                      "• Satu baris untuk satu kode",
+                inline=False
+            )
+            welcome_embed.set_footer(text="Channel ini akan otomatis terhapus setelah selesai")
+
+            await redeem_channel.send(embed=welcome_embed, view=StartFormButton())
+            
+        except Exception as e:
+            print(f"❌ Error creating channel: {e}")
+            await interaction.response.send_message(
+                "❌ Maaf, terjadi kesalahan saat membuat channel. Silakan coba lagi atau hubungi admin.",
+                ephemeral=True
+            )
 
     @ui.button(
-        label="💰 Topup Saldo",
+        label="💰 Top Up Saldo",
         style=discord.ButtonStyle.blurple,
         custom_id="topup_button"
     )
     async def topup(self, interaction: Interaction, button: ui.Button):
         """Buka modal topup"""
+        if not midtrans:
+            return await interaction.response.send_message(
+                "⚠️ Sistem pembayaran sedang dalam maintenance. Silakan hubungi admin.",
+                ephemeral=True
+            )
         await interaction.response.send_modal(TopupModal())
 
     @ui.button(
-        label="💳 Cek Saldo",
+        label="💳 Info Saldo",
         style=discord.ButtonStyle.gray,
         custom_id="check_balance_button"
     )
@@ -284,71 +471,122 @@ class MainMenuView(ui.View):
         stats = get_user_stats(user_id)
         
         embed = discord.Embed(
-            title="💳 Informasi Saldo",
+            title="💳 Informasi Akun Anda",
             color=0x3498db
         )
-        embed.add_field(name="Saldo Saat Ini", value=format_rupiah(balance), inline=False)
-        embed.add_field(name="Total Topup", value=format_rupiah(stats['total_topup']), inline=True)
-        embed.add_field(name="Total Spent", value=format_rupiah(stats['total_spent']), inline=True)
-        embed.add_field(name="Redeem Success", value=str(stats['success_redeem']), inline=True)
-        embed.add_field(name="Redeem Failed", value=str(stats['failed_redeem']), inline=True)
+        embed.add_field(
+            name="💰 Saldo Tersedia", 
+            value=format_rupiah(balance), 
+            inline=False
+        )
+        embed.add_field(
+            name="📊 Statistik",
+            value=f"• Total Top Up: {format_rupiah(stats['total_topup'])}\n"
+                  f"• Total Penggunaan: {format_rupiah(stats['total_spent'])}\n"
+                  f"• Redeem Berhasil: {stats['success_redeem']}\n"
+                  f"• Redeem Gagal: {stats['failed_redeem']}",
+            inline=False
+        )
         embed.set_footer(text=f"User ID: {user_id}")
         
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @ui.button(
-        label="📊 Status Bot",
+        label="ℹ️ Bantuan",
         style=discord.ButtonStyle.gray,
-        custom_id="status_button"
+        custom_id="help_button"
     )
-    async def status(self, interaction: Interaction, button: ui.Button):
-        """Cek status bot dan antrian"""
-        queue_count = get_redeem_queue_count()
-        
+    async def help_menu(self, interaction: Interaction, button: ui.Button):
+        """Tampilkan menu bantuan"""
         embed = discord.Embed(
-            title="📊 Status Bot",
-            color=0xe67e22
+            title="ℹ️ Panduan Penggunaan Bot",
+            description="Berikut adalah cara menggunakan bot redeem code ini:",
+            color=0x9b59b6
         )
-        embed.add_field(name="Antrian Redeem", value=f"{queue_count} task", inline=True)
-        embed.add_field(name="Max Workers", value=str(config.MAX_LOGIN_WORKERS), inline=True)
-        embed.add_field(name="Biaya Per Kode", value=format_rupiah(config.REDEEM_COST_PER_CODE), inline=False)
-        embed.set_footer(text="Bot sedang berjalan normal")
+        
+        embed.add_field(
+            name="1️⃣ Top Up Saldo",
+            value="Klik tombol **💰 Top Up Saldo** untuk mengisi saldo via QRIS. "
+                  "Pembayaran otomatis terverifikasi dalam hitungan detik.",
+            inline=False
+        )
+        
+        embed.add_field(
+            name="2️⃣ Mulai Redeem",
+            value="Klik tombol **🎮 Mulai Redeem** untuk membuat sesi privat. "
+                  "Bot akan membuatkan channel khusus untuk Anda.",
+            inline=False
+        )
+        
+        embed.add_field(
+            name="3️⃣ Input Parameter",
+            value="Isi informasi akun CloudEmulator Anda (email, password, region, dll).",
+            inline=False
+        )
+        
+        embed.add_field(
+            name="4️⃣ Upload File Kode",
+            value="Upload file `code.txt` yang berisi kode redeem (satu kode per baris).",
+            inline=False
+        )
+        
+        embed.add_field(
+            name="💰 Biaya",
+            value=f"Biaya redeem: **{format_rupiah(config.REDEEM_COST_PER_CODE)}** per kode\n"
+                  f"Top up minimal: **{format_rupiah(config.MIN_TOPUP_AMOUNT)}**",
+            inline=False
+        )
+        
+        embed.add_field(
+            name="❓ Butuh Bantuan?",
+            value="Hubungi admin jika mengalami kendala atau ada pertanyaan.",
+            inline=False
+        )
+        
+        embed.set_footer(text="Bot Redeem Code • CloudEmulator")
         
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 # ==============================
 # Topup Modal
 # ==============================
-class TopupModal(ui.Modal, title="Topup Saldo"):
+class TopupModal(ui.Modal, title="💰 Top Up Saldo"):
     amount = ui.TextInput(
-        label="Jumlah Topup (Rupiah)",
-        placeholder=f"Minimal {config.MIN_TOPUP_AMOUNT}",
+        label="Jumlah Top Up (Rupiah)",
+        placeholder=f"Minimal Rp {config.MIN_TOPUP_AMOUNT:,}",
         min_length=4,
         max_length=10
     )
 
     async def on_submit(self, interaction: Interaction):
         try:
-            amount_value = int(self.amount.value.strip())
+            amount_value = int(self.amount.value.strip().replace('.', '').replace(',', ''))
             
             if amount_value < config.MIN_TOPUP_AMOUNT:
                 return await interaction.response.send_message(
-                    f"❌ Minimal topup adalah {format_rupiah(config.MIN_TOPUP_AMOUNT)}",
+                    f"❌ Minimal top up adalah **{format_rupiah(config.MIN_TOPUP_AMOUNT)}**",
+                    ephemeral=True
+                )
+            
+            if amount_value > 10000000:  # Max 10 juta
+                return await interaction.response.send_message(
+                    "❌ Maksimal top up adalah **Rp 10.000.000** per transaksi",
                     ephemeral=True
                 )
             
             # Generate order ID
             order_id = generate_order_id(interaction.user.id)
             
-            # Buat transaksi Midtrans
+            # Customer details
             customer_details = {
-                "first_name": interaction.user.name,
+                "first_name": interaction.user.name[:50],
                 "email": f"{interaction.user.id}@discord.user",
                 "phone": "08123456789"
             }
             
             await interaction.response.defer(ephemeral=True)
             
+            # Create transaction
             transaction = midtrans.create_qris_transaction(
                 order_id=order_id,
                 amount=amount_value,
@@ -357,60 +595,84 @@ class TopupModal(ui.Modal, title="Topup Saldo"):
             
             if not transaction:
                 return await interaction.followup.send(
-                    "❌ Gagal membuat transaksi. Silakan coba lagi.",
+                    "❌ Gagal membuat transaksi pembayaran. Silakan coba lagi dalam beberapa saat.",
                     ephemeral=True
                 )
             
             # Simpan ke database
             create_topup(interaction.user.id, amount_value, order_id)
             
-            # Ambil QR code URL
+            # QR code URL
             qr_url = transaction.get('actions', [{}])[0].get('url', '')
             
-            # Kirim ke DM user
+            # Kirim ke DM
             try:
                 embed = discord.Embed(
                     title="💳 Pembayaran QRIS",
                     description=f"Scan QR code di bawah untuk membayar **{format_rupiah(amount_value)}**",
                     color=0x00ff00
                 )
-                embed.add_field(name="Order ID", value=order_id, inline=False)
-                embed.add_field(name="Jumlah", value=format_rupiah(amount_value), inline=False)
+                embed.add_field(name="🆔 Order ID", value=f"`{order_id}`", inline=False)
+                embed.add_field(name="💰 Jumlah", value=format_rupiah(amount_value), inline=True)
+                embed.add_field(name="⏱️ Berlaku", value="15 menit", inline=True)
                 embed.set_image(url=qr_url)
-                embed.set_footer(text="Pembayaran akan otomatis terverifikasi • Berlaku 15 menit")
+                embed.add_field(
+                    name="ℹ️ Informasi",
+                    value="• Pembayaran otomatis terverifikasi\n"
+                          "• Saldo akan langsung masuk setelah pembayaran berhasil\n"
+                          "• Anda akan menerima notifikasi via DM",
+                    inline=False
+                )
+                embed.set_footer(text="Terima kasih telah menggunakan layanan kami")
                 
                 await interaction.user.send(embed=embed)
                 
                 await interaction.followup.send(
-                    f"✅ Invoice pembayaran telah dikirim ke DM kamu!\n"
-                    f"Order ID: `{order_id}`\n"
-                    f"Jumlah: **{format_rupiah(amount_value)}**",
+                    f"✅ **Invoice pembayaran telah dikirim ke DM Anda!**\n\n"
+                    f"📋 Order ID: `{order_id}`\n"
+                    f"💰 Jumlah: **{format_rupiah(amount_value)}**\n"
+                    f"⏱️ Berlaku: 15 menit\n\n"
+                    f"💡 Silakan cek DM Anda dan scan QR code untuk melakukan pembayaran.",
                     ephemeral=True
                 )
                 
             except discord.Forbidden:
-                await interaction.followup.send(
-                    f"⚠️ Tidak bisa mengirim DM. Pastikan DM terbuka!\n\n"
-                    f"**QR Code:** {qr_url}\n"
-                    f"Order ID: `{order_id}`",
-                    ephemeral=True
+                embed = discord.Embed(
+                    title="⚠️ Tidak Dapat Mengirim DM",
+                    description="Silakan aktifkan DM untuk menerima invoice pembayaran.",
+                    color=0xf39c12
                 )
+                embed.add_field(name="QR Code", value=f"[Klik di sini untuk membayar]({qr_url})", inline=False)
+                embed.add_field(name="Order ID", value=f"`{order_id}`", inline=False)
+                
+                await interaction.followup.send(embed=embed, ephemeral=True)
                 
         except ValueError:
             await interaction.response.send_message(
-                "❌ Jumlah harus berupa angka!",
+                "❌ Format jumlah tidak valid. Harap masukkan angka saja.",
                 ephemeral=True
             )
+        except Exception as e:
+            print(f"❌ Topup error: {e}")
+            print(traceback.format_exc())
+            
+            try:
+                await interaction.followup.send(
+                    "❌ Terjadi kesalahan saat memproses top up. Silakan coba lagi atau hubungi admin.",
+                    ephemeral=True
+                )
+            except:
+                pass
 
 # ==============================
-# Button to open modal
+# Start Form Button
 # ==============================
 class StartFormButton(ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
     @ui.button(
-        label="📋 Input Parameter",
+        label="📝 Input Parameter",
         style=discord.ButtonStyle.blurple,
         custom_id="input_parameter_button"
     )
@@ -418,13 +680,26 @@ class StartFormButton(ui.View):
         await interaction.response.send_modal(RedeemModal())
 
 # ==============================
-# Modal for redeem parameters
+# Redeem Modal
 # ==============================
-class RedeemModal(ui.Modal, title="Parameter Redeem"):
-    email = ui.TextInput(label="Email", placeholder="Email akun Redfinger")
-    password = ui.TextInput(label="Password", placeholder="Password akun", style=discord.TextStyle.short)
-    region = ui.TextInput(label="Region", placeholder="hk sg th")
-    android = ui.TextInput(label="Android Version (1/2/3)", placeholder="1=8.1 | 2=10 | 3=12")
+class RedeemModal(ui.Modal, title="📋 Parameter Akun Redeem"):
+    email = ui.TextInput(
+        label="Email",
+        placeholder="Email akun CloudEmulator Anda"
+    )
+    password = ui.TextInput(
+        label="Password",
+        placeholder="Password akun",
+        style=discord.TextStyle.short
+    )
+    region = ui.TextInput(
+        label="Region",
+        placeholder="Contoh: hk sg th (pisahkan dengan spasi)"
+    )
+    android = ui.TextInput(
+        label="Versi Android",
+        placeholder="Pilih: 1 (Android 8.1) | 2 (Android 10) | 3 (Android 12)"
+    )
 
     async def on_submit(self, interaction: Interaction):
         try:
@@ -433,25 +708,53 @@ class RedeemModal(ui.Modal, title="Parameter Redeem"):
                 raise ValueError()
         except:
             return await interaction.response.send_message(
-                "❌ Android version invalid.",
+                "❌ Versi Android tidak valid. Pilih: **1** (Android 8.1), **2** (Android 10), atau **3** (Android 12)",
+                ephemeral=True
+            )
+
+        # Validasi region
+        valid_regions = ['hk', 'sg', 'us', 'tw', 'th']
+        region_input = self.region.value.strip().lower()
+        regions = region_input.split()
+        
+        invalid_regions = [r for r in regions if r not in valid_regions]
+        if invalid_regions:
+            return await interaction.response.send_message(
+                f"❌ Region tidak valid: **{', '.join(invalid_regions)}**\n\n"
+                f"Region yang tersedia: **hk, sg, us, tw, th**",
                 ephemeral=True
             )
 
         user_data[interaction.user.id] = {
             "email": self.email.value.strip(),
             "password": self.password.value.strip(),
-            "region": self.region.value.strip(),
+            "region": region_input,
             "android_choice": android_choice,
             "user": interaction.user
         }
 
-        await interaction.response.send_message(
-            "✅ Parameter diterima! Silakan upload `code.txt` di channel ini.",
-            ephemeral=False
+        android_names = {1: "Android 8.1", 2: "Android 10", 3: "Android 12"}
+        
+        embed = discord.Embed(
+            title="✅ Parameter Berhasil Disimpan",
+            description="Informasi akun Anda telah tersimpan dengan aman.",
+            color=0x2ecc71
         )
+        embed.add_field(name="📧 Email", value=self.email.value, inline=False)
+        embed.add_field(name="🌏 Region", value=region_input.upper(), inline=True)
+        embed.add_field(name="📱 Android", value=android_names[android_choice], inline=True)
+        embed.add_field(
+            name="📁 Langkah Selanjutnya",
+            value="Silakan upload file **`code.txt`** yang berisi kode redeem Anda.\n"
+                  "Format: satu kode per baris",
+            inline=False
+        )
+        embed.set_footer(text="Data Anda aman dan akan dihapus setelah proses selesai")
+
+        await interaction.response.send_message(embed=embed, ephemeral=False)
 
 # ==============================
-# Handle file upload in channel
+# File Upload Handler
 # ==============================
 @bot.event
 async def on_message(message: discord.Message):
@@ -462,82 +765,121 @@ async def on_message(message: discord.Message):
         if message.channel.name.startswith("redeem-") and len(message.attachments) > 0:
             user_info = user_data.get(message.author.id)
             if not user_info:
-                return await message.channel.send("❌ Parameter redeem belum diisi.")
+                return await safe_send(message.channel,
+                    "⚠️ Silakan isi parameter terlebih dahulu dengan klik tombol **Input Parameter**."
+                )
 
             attachment = message.attachments[0]
 
             if not attachment.filename.endswith(".txt"):
-                return await message.channel.send("❌ File harus berekstensi `.txt`.")
+                return await safe_send(message.channel,
+                    "❌ File harus berformat **`.txt`**\n\n"
+                    "💡 Pastikan file berisi kode redeem dengan format satu kode per baris."
+                )
 
-            # Hitung jumlah kode
-            content = await attachment.read()
-            codes = [line.strip() for line in content.decode('utf-8').split('\n') if line.strip()]
-            code_count = len(codes)
-            
-            if code_count == 0:
-                return await message.channel.send("❌ File code kosong!")
-            
-            # Limit maksimal kode per upload (opsional, untuk mencegah abuse)
-            if code_count > config.MAX_CODES_PER_UPLOAD:
-                return await message.channel.send(
-                    f"❌ Terlalu banyak kode!\n"
-                    f"Maksimal: **{config.MAX_CODES_PER_UPLOAD} kode** per upload\n"
-                    f"Kode kamu: **{code_count} kode**\n\n"
-                    f"💡 Silakan split file menjadi beberapa bagian."
-                )
-            
-            # Hitung total biaya
-            total_cost = code_count * config.REDEEM_COST_PER_CODE
-            user_balance = get_balance(message.author.id)
-            
-            # Cek saldo dengan pesan yang lebih jelas
-            if user_balance < total_cost:
-                shortage = total_cost - user_balance
+            try:
+                # Read and validate codes
+                content = await attachment.read()
+                codes = [line.strip() for line in content.decode('utf-8').split('\n') if line.strip()]
+                code_count = len(codes)
+                
+                if code_count == 0:
+                    return await safe_send(message.channel,
+                        "❌ File kode kosong!\n\n"
+                        "💡 Pastikan file berisi minimal satu kode redeem."
+                    )
+                
+                # Check limit
+                if code_count > config.MAX_CODES_PER_UPLOAD:
+                    return await safe_send(message.channel,
+                        f"❌ **Terlalu Banyak Kode!**\n\n"
+                        f"• Maksimal: **{config.MAX_CODES_PER_UPLOAD} kode** per upload\n"
+                        f"• Kode Anda: **{code_count} kode**\n\n"
+                        f"💡 Silakan bagi file menjadi beberapa bagian yang lebih kecil."
+                    )
+                
+                # Calculate cost
+                total_cost = code_count * config.REDEEM_COST_PER_CODE
+                user_balance = get_balance(message.author.id)
+                
+                # Check balance
+                if user_balance < total_cost:
+                    shortage = total_cost - user_balance
+                    embed = discord.Embed(
+                        title="💳 Saldo Tidak Mencukupi",
+                        description="Maaf, saldo Anda tidak cukup untuk memproses kode sebanyak ini.",
+                        color=0xe74c3c
+                    )
+                    embed.add_field(name="📦 Jumlah Kode", value=f"{code_count} kode", inline=True)
+                    embed.add_field(name="💰 Total Biaya", value=format_rupiah(total_cost), inline=True)
+                    embed.add_field(name="💳 Saldo Anda", value=format_rupiah(user_balance), inline=True)
+                    embed.add_field(name="⚠️ Kekurangan", value=format_rupiah(shortage), inline=True)
+                    embed.add_field(
+                        name="💡 Solusi",
+                        value="Kembali ke channel utama dan klik tombol **💰 Top Up Saldo** untuk mengisi saldo.",
+                        inline=False
+                    )
+                    return await safe_send(message.channel, embed=embed)
+                
+                # Deduct balance
+                if not deduct_balance(message.author.id, total_cost):
+                    return await safe_send(message.channel,
+                        "❌ Gagal memproses pembayaran. Silakan coba lagi atau hubungi admin."
+                    )
+                
+                # Save file
+                temp_code_file = f"code_temp_{user_info['user'].id}.txt"
+                await attachment.save(temp_code_file)
+
+                # Add to queue
+                await login_queue.put({
+                    "user_id": user_info['user'].id,
+                    "email": user_info["email"],
+                    "password": user_info["password"],
+                    "region": user_info["region"],
+                    "android_choice": user_info["android_choice"],
+                    "channel": message.channel,
+                    "code_file": temp_code_file
+                })
+
+                new_balance = get_balance(message.author.id)
+                queue_size = login_queue.qsize()
+                
                 embed = discord.Embed(
-                    title="❌ Saldo Tidak Cukup",
-                    description="Saldo kamu tidak mencukupi untuk proses redeem ini.",
-                    color=0xe74c3c
+                    title="✅ File Diterima & Saldo Terpotong",
+                    description="Redeem code Anda sedang diproses!",
+                    color=0x2ecc71
                 )
-                embed.add_field(name="Jumlah Kode", value=f"{code_count} kode", inline=True)
-                embed.add_field(name="Total Biaya", value=format_rupiah(total_cost), inline=True)
-                embed.add_field(name="Saldo Kamu", value=format_rupiah(user_balance), inline=True)
-                embed.add_field(name="Kekurangan", value=format_rupiah(shortage), inline=True)
+                embed.add_field(name="📦 Jumlah Kode", value=f"{code_count} kode", inline=True)
+                embed.add_field(name="💰 Biaya", value=format_rupiah(total_cost), inline=True)
+                embed.add_field(name="💳 Saldo Tersisa", value=format_rupiah(new_balance), inline=True)
                 embed.add_field(
-                    name="💡 Solusi", 
-                    value="Klik tombol **💰 Topup Saldo** di channel utama untuk isi saldo.",
+                    name="📊 Status",
+                    value=f"• Posisi antrian: **{queue_size}**\n"
+                          f"• Status: Menunggu pemrosesan\n"
+                          f"• Estimasi: {queue_size * 2}-{queue_size * 5} menit",
                     inline=False
                 )
-                return await message.channel.send(embed=embed)
-            
-            # Kurangi saldo
-            if not deduct_balance(message.author.id, total_cost):
-                return await message.channel.send("❌ Gagal mengurangi saldo. Silakan coba lagi.")
-            
-            # Simpan file
-            temp_code_file = f"code_temp_{user_info['user'].id}.txt"
-            await attachment.save(temp_code_file)
-
-            # Masukkan ke antrian
-            await login_queue.put({
-                "user_id": user_info['user'].id,
-                "email": user_info["email"],
-                "password": user_info["password"],
-                "region": user_info["region"],
-                "android_choice": user_info["android_choice"],
-                "channel": message.channel,
-                "code_file": temp_code_file
-            })
-
-            new_balance = get_balance(message.author.id)
-            
-            await message.channel.send(
-                f"✅ File diterima dan saldo telah dipotong!\n"
-                f"Jumlah kode: **{code_count}**\n"
-                f"Biaya: **{format_rupiah(total_cost)}**\n"
-                f"Saldo tersisa: **{format_rupiah(new_balance)}**\n\n"
-                f"⚙️ Task masuk antrian. Mohon tunggu...\n"
-                f"📊 Status: Login dan redeem akan dimulai segera"
-            )
+                embed.add_field(
+                    name="ℹ️ Informasi",
+                    value="Proses redeem akan dimulai segera. Anda akan menerima notifikasi saat selesai.",
+                    inline=False
+                )
+                embed.set_footer(text="Mohon bersabar, proses mungkin memakan waktu beberapa menit")
+                
+                await safe_send(message.channel, embed=embed)
+                
+            except UnicodeDecodeError:
+                await safe_send(message.channel,
+                    "❌ File tidak dapat dibaca!\n\n"
+                    "💡 Pastikan file adalah text file UTF-8 yang valid."
+                )
+            except Exception as e:
+                print(f"❌ File processing error: {e}")
+                print(traceback.format_exc())
+                await safe_send(message.channel,
+                    "❌ Terjadi kesalahan saat memproses file. Silakan coba lagi atau hubungi admin."
+                )
 
     await bot.process_commands(message)
 
@@ -546,127 +888,216 @@ async def on_message(message: discord.Message):
 # ==============================
 @bot.command(name='saldo')
 async def check_balance_command(ctx):
-    """Command untuk cek saldo"""
-    user_id = ctx.author.id
-    balance = get_balance(user_id)
-    await ctx.send(f"💰 Saldo kamu saat ini: **{format_rupiah(balance)}**")
+    """Cek saldo Anda"""
+    balance = get_balance(ctx.author.id)
+    await ctx.send(f"💰 Saldo Anda: **{format_rupiah(balance)}**")
 
 @bot.command(name='stats')
 async def stats_command(ctx):
-    """Command untuk cek statistik"""
+    """Lihat statistik akun Anda"""
     stats = get_user_stats(ctx.author.id)
     
     embed = discord.Embed(
-        title="📊 Statistik Kamu",
+        title="📊 Statistik Akun Anda",
         color=0x9b59b6
     )
-    embed.add_field(name="Saldo", value=format_rupiah(stats['balance']), inline=True)
-    embed.add_field(name="Total Topup", value=format_rupiah(stats['total_topup']), inline=True)
-    embed.add_field(name="Total Spent", value=format_rupiah(stats['total_spent']), inline=True)
-    embed.add_field(name="Success Redeem", value=str(stats['success_redeem']), inline=True)
-    embed.add_field(name="Failed Redeem", value=str(stats['failed_redeem']), inline=True)
-    embed.add_field(name="Total Redeem", value=str(stats['total_redeem']), inline=True)
+    embed.add_field(name="💰 Saldo", value=format_rupiah(stats['balance']), inline=True)
+    embed.add_field(name="📈 Total Top Up", value=format_rupiah(stats['total_topup']), inline=True)
+    embed.add_field(name="📉 Total Pengeluaran", value=format_rupiah(stats['total_spent']), inline=True)
+    embed.add_field(name="✅ Redeem Berhasil", value=str(stats['success_redeem']), inline=True)
+    embed.add_field(name="❌ Redeem Gagal", value=str(stats['failed_redeem']), inline=True)
+    embed.add_field(name="📦 Total Redeem", value=str(stats['total_redeem']), inline=True)
+    embed.set_footer(text=f"User ID: {ctx.author.id}")
     
     await ctx.send(embed=embed)
 
 @bot.command(name='close')
 async def close_channel_command(ctx):
-    """Command untuk close channel redeem privat"""
-    # Cek apakah di channel redeem privat
+    """Tutup channel redeem privat"""
     if not ctx.channel.name.startswith("redeem-"):
-        return await ctx.send("❌ Command ini hanya bisa digunakan di channel redeem privat!")
+        return await ctx.send("ℹ️ Command ini hanya bisa digunakan di channel redeem.")
     
-    # Cek apakah user adalah owner channel atau admin
     is_owner = ctx.author.id in active_channels and active_channels[ctx.author.id] == ctx.channel.id
     admin_role = discord.utils.get(ctx.guild.roles, name=config.ADMIN_ROLE_NAME)
     is_admin = admin_role in ctx.author.roles if admin_role else False
     
     if not (is_owner or is_admin):
-        return await ctx.send("❌ Kamu tidak bisa close channel ini!")
+        return await ctx.send("❌ Anda tidak memiliki izin untuk menutup channel ini.")
     
-    # Hapus dari tracking
     if ctx.author.id in active_channels:
         active_channels.pop(ctx.author.id)
     
-    await ctx.send("🗑️ Channel ini akan dihapus dalam 5 detik...")
+    await ctx.send("👋 Channel ini akan ditutup dalam 5 detik. Terima kasih telah menggunakan layanan kami!")
     await asyncio.sleep(5)
-    await ctx.channel.delete(reason=f"Closed by {ctx.author.name}")
+    
+    try:
+        await ctx.channel.delete(reason=f"Ditutup oleh {ctx.author.name}")
+    except:
+        pass
 
-@bot.command(name='commands', aliases=['cmd', 'bothelp'])
-async def commands_list(ctx):
-    """Command untuk menampilkan daftar command"""
+@bot.command(name='help', aliases=['bantuan'])
+async def help_command(ctx):
+    """Tampilkan panduan penggunaan"""
     embed = discord.Embed(
-        title="📖 Daftar Command",
-        description="Command yang tersedia untuk semua user",
+        title="📖 Panduan Penggunaan Bot",
+        description="Berikut adalah command yang tersedia:",
         color=0x3498db
     )
     
     commands_list = [
-        ("!saldo", "Cek saldo kamu saat ini"),
-        ("!stats", "Lihat statistik lengkap (topup, redeem, dll)"),
-        ("!close", "Tutup channel redeem privat (hanya di channel redeem)"),
-        ("!commands", "Tampilkan pesan ini (alias: !cmd, !bothelp)"),
+        ("!saldo", "Cek saldo Anda saat ini"),
+        ("!stats", "Lihat statistik lengkap akun Anda"),
+        ("!close", "Tutup channel redeem (hanya di channel redeem)"),
+        ("!help atau !bantuan", "Tampilkan panduan ini"),
     ]
     
     for cmd, desc in commands_list:
         embed.add_field(name=cmd, value=desc, inline=False)
     
     embed.add_field(
-        name="💡 Tips",
-        value="Gunakan tombol di channel utama untuk akses fitur utama:\n"
-              "🟩 Start Redeem | 💰 Topup Saldo | 💳 Cek Saldo | 📊 Status Bot",
+        name="💡 Tips Penggunaan",
+        value="• Gunakan tombol di channel utama untuk fitur utama\n"
+              "• Pastikan DM terbuka untuk menerima invoice pembayaran\n"
+              "• Simpan Order ID untuk tracking pembayaran",
         inline=False
     )
     
-    embed.set_footer(text="Untuk admin commands, ketik !adminhelp (khusus admin)")
+    embed.set_footer(text="Untuk bantuan lebih lanjut, hubungi admin")
     
     await ctx.send(embed=embed)
 
 # ==============================
-# READY
+# Error Handler
+# ==============================
+@bot.event
+async def on_command_error(ctx, error):
+    """Global error handler untuk commands"""
+    if isinstance(error, commands.CommandNotFound):
+        return  # Ignore unknown commands
+    
+    if isinstance(error, commands.MissingPermissions):
+        await ctx.send("❌ Anda tidak memiliki izin untuk menggunakan command ini.")
+        return
+    
+    if isinstance(error, commands.BotMissingPermissions):
+        await ctx.send("❌ Bot tidak memiliki izin yang diperlukan untuk menjalankan command ini.")
+        return
+    
+    # Log unexpected errors
+    print(f"❌ Command error in {ctx.command}: {error}")
+    print(traceback.format_exc())
+    
+    await ctx.send(
+        "❌ Terjadi kesalahan saat menjalankan command. "
+        "Silakan coba lagi atau hubungi admin jika masalah berlanjut."
+    )
+
+# ==============================
+# Ready Event
 # ==============================
 @bot.event
 async def on_ready():
-    print(f"✅ Bot login sebagai {bot.user}")
+    """Bot ready event"""
+    print(f"✅ Bot berhasil login sebagai {bot.user}")
+    print(f"📊 Connected to {len(bot.guilds)} server(s)")
+    
+    # Set bot status
+    try:
+        await bot.change_presence(
+            activity=discord.Activity(
+                type=discord.ActivityType.watching,
+                name="redeem codes | !help"
+            )
+        )
+    except:
+        pass
     
     # Start webhook server
-    webhook_server.set_discord_bot(bot)
-    webhook_server.start_webhook_server()
+    try:
+        webhook_server.set_discord_bot(bot)
+        webhook_server.start_webhook_server()
+        print(f"✅ Webhook server started on port {config.WEBHOOK_PORT}")
+    except Exception as e:
+        print(f"⚠️ Webhook server warning: {e}")
 
-    # Kirim main menu ke public channel
-    channel = bot.get_channel(config.PUBLIC_CHANNEL_ID)
-    if channel:
-        embed = discord.Embed(
-            title="🤖 Bot Redeem CloudEmulator",
-            description="Pilih menu di bawah untuk memulai:",
-            color=0x2ecc71
-        )
-        embed.add_field(
-            name="🟩 Start Redeem",
-            value="Buat channel privat untuk redeem kode",
-            inline=False
-        )
-        embed.add_field(
-            name="💰 Topup Saldo",
-            value="Isi saldo via QRIS (Midtrans)",
-            inline=False
-        )
-        embed.add_field(
-            name="💳 Cek Saldo",
-            value="Lihat saldo dan statistik kamu",
-            inline=False
-        )
-        embed.add_field(
-            name="📊 Status Bot",
-            value="Lihat status bot dan antrian redeem",
-            inline=False
-        )
-        embed.set_footer(text=f"Biaya redeem: {format_rupiah(config.REDEEM_COST_PER_CODE)} per kode")
-        
-        await channel.send(embed=embed, view=MainMenuView())
+    # Send/update main menu
+    try:
+        channel = bot.get_channel(config.PUBLIC_CHANNEL_ID)
+        if channel:
+            embed = discord.Embed(
+                title="🤖 Bot Redeem Code CloudEmulator",
+                description="Selamat datang! Pilih menu di bawah untuk memulai:",
+                color=0x2ecc71
+            )
+            
+            embed.add_field(
+                name="🎮 Mulai Redeem",
+                value="Buat sesi privat untuk redeem code Anda secara otomatis",
+                inline=False
+            )
+            embed.add_field(
+                name="💰 Top Up Saldo",
+                value="Isi saldo dengan mudah via QRIS (pembayaran otomatis terverifikasi)",
+                inline=False
+            )
+            embed.add_field(
+                name="💳 Info Saldo",
+                value="Cek saldo dan statistik akun Anda",
+                inline=False
+            )
+            embed.add_field(
+                name="ℹ️ Bantuan",
+                value="Panduan lengkap cara menggunakan bot ini",
+                inline=False
+            )
+            
+            embed.add_field(
+                name="💰 Informasi Biaya",
+                value=f"• Biaya redeem: **{format_rupiah(config.REDEEM_COST_PER_CODE)}** per kode\n"
+                      f"• Top up minimal: **{format_rupiah(config.MIN_TOPUP_AMOUNT)}**\n"
+                      f"• Maksimal kode per upload: **{config.MAX_CODES_PER_UPLOAD}** kode",
+                inline=False
+            )
+            
+            embed.set_footer(
+                text="Bot Redeem Code • Powered by CloudEmulator",
+                icon_url=bot.user.display_avatar.url if bot.user.display_avatar else None
+            )
+            
+            await channel.send(embed=embed, view=MainMenuView())
+            print(f"✅ Main menu sent to channel {channel.id}")
+    except Exception as e:
+        print(f"⚠️ Could not send main menu: {e}")
 
 # ==============================
-# RUN BOT
+# Import Admin Commands (Optional)
+# ==============================
+try:
+    from admin_commands import setup_admin_commands
+    setup_admin_commands(bot)
+except ImportError:
+    print("ℹ️ Admin commands not loaded (admin_commands.py not found)")
+except Exception as e:
+    print(f"⚠️ Could not load admin commands: {e}")
+
+# ==============================
+# Run Bot
 # ==============================
 if __name__ == "__main__":
-    bot.run(config.DISCORD_TOKEN)
+    try:
+        # Validate config
+        if not config.validate_config():
+            print("\n🛑 Bot tidak dapat dijalankan karena konfigurasi tidak valid.")
+            print("💡 Silakan perbaiki file .env terlebih dahulu.\n")
+            exit(1)
+        
+        config.print_config()
+        
+        print("\n🚀 Starting bot...")
+        bot.run(config.DISCORD_TOKEN)
+        
+    except KeyboardInterrupt:
+        print("\n👋 Bot dihentikan oleh user")
+    except Exception as e:
+        print(f"\n❌ Critical error: {e}")
+        print(traceback.format_exc())
