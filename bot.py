@@ -624,7 +624,7 @@ async def commands_list(ctx):
 @bot.event
 async def on_ready():
     print(f"✅ Bot login sebagai {bot.user}")
-    setup_admin_commands(bot) // untuk mengaktifkan command admin
+    setup_admin_commands(bot) # untuk mengaktifkan command admin
     # Start webhook server
     webhook_server.set_discord_bot(bot)
     webhook_server.start_webhook_server()
