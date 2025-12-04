@@ -6,7 +6,7 @@ import random
 import os
 from datetime import datetime
 import traceback
-
+import time
 # Import modules
 from redeem_core import run_redeem_process
 import config
@@ -31,8 +31,14 @@ intents.members = True
 user_data = {}          # user_id -> parameter data
 active_channels = {}    # user_id -> channel_id
 live_logs = {}          # channel_id -> list of log lines
-live_panel_message = {} # channel_id -> discord.Message
+live_status_message = {}  # channel_id -> discord.Message (single status message)
+session_stats = {}      # user_id -> {'success': 0, 'invalid': 0, 'total': 0}
 last_update = {}        # channel_id -> timestamp
+
+# Auto-close tracking
+channel_last_activity = {}   # channel_id -> timestamp (last message time)
+channel_completion_time = {} # channel_id -> timestamp (when redeem completed)
+channel_close_warned = {}    # channel_id -> bool (warning sent?)
 
 # ==============================
 # Queue & Worker Management
@@ -94,9 +100,26 @@ async def login_worker(worker_id: int):
             email = task["email"]
             password = task["password"]
             channel = task["channel"]
-            android_choice = task["android_choice"]
+            android_version = task["android_version"]
             region = task["region"]
             code_file = task["code_file"]
+
+            # Clean up old session files BEFORE starting
+            cleanup_old_session_files(user_id)
+            
+            # Get new session files with timestamp
+            session_files = get_session_files(user_id)
+            
+            # Load codes for stats tracking
+            from redeem_core import load_codes
+            codes = load_codes(code_file)
+            
+            # Initialize session stats
+            session_stats[user_id] = {
+                'success': 0,
+                'invalid': 0,
+                'total': len(codes)
+            }
 
             loop = asyncio.get_event_loop()
 
@@ -106,9 +129,10 @@ async def login_worker(worker_id: int):
                     email=email,
                     password=password,
                     region_input=region,
-                    android_choice=android_choice,
+                    android_version=android_version,
                     progress_callback=make_progress_callback(channel),
-                    user_id=user_id
+                    user_id=user_id,
+                    session_files=session_files  # Pass session files
                 )
 
             try:
@@ -118,8 +142,8 @@ async def login_worker(worker_id: int):
                     timeout=1800  # 30 menit timeout
                 )
                 
-                # Kirim completion message
-                await safe_send_completion(channel, user_id, result)
+                # Kirim completion message with session files
+                await safe_send_completion(channel, user_id, result, session_files)
                 
             except asyncio.TimeoutError:
                 await safe_send(channel, 
@@ -127,6 +151,8 @@ async def login_worker(worker_id: int):
                     "Proses melebihi batas waktu yang ditentukan. "
                     "Silakan coba lagi dengan kode yang lebih sedikit atau hubungi admin."
                 )
+                # Mark completion for auto-close
+                channel_completion_time[channel.id] = config.get_wib_time().timestamp()
                 
             except Exception as e:
                 error_msg = str(e)
@@ -139,14 +165,19 @@ async def login_worker(worker_id: int):
                     "Tim kami telah menerima laporan error ini.\n\n"
                     "💡 Silakan coba lagi dalam beberapa saat atau hubungi admin untuk bantuan."
                 )
+                # Mark completion for auto-close
+                channel_completion_time[channel.id] = config.get_wib_time().timestamp()
             
             finally:
-                # Cleanup
+                # Cleanup temp code file immediately
                 try:
                     if os.path.exists(code_file):
                         os.remove(code_file)
+                        print(f"🧹 Cleaned temp code file: {code_file}")
                 except:
                     pass
+                
+                # Session files kept until channel auto-closes
                 
                 login_queue.task_done()
                 worker_status[worker_id] = "idle"
@@ -173,41 +204,43 @@ async def safe_send(channel, content=None, embed=None, view=None):
         print(f"⚠️ HTTP error sending message: {e}")
         raise
 
-async def safe_send_completion(channel, user_id, result):
-    """Send completion message with statistics"""
+async def safe_send_completion(channel, user_id, result, session_files):
+    """Send completion message with statistics and file uploads"""
     try:
-        # Hitung statistik
-        success_file = f"success_{user_id}.txt"
-        invalid_file = f"invalid_{user_id}.txt"
-        
-        success_count = 0
-        invalid_count = 0
-        
-        if os.path.exists(success_file):
-            with open(success_file, 'r', encoding='utf-8') as f:
-                success_count = len([l for l in f.readlines() if l.strip()])
-        
-        if os.path.exists(invalid_file):
-            with open(invalid_file, 'r', encoding='utf-8') as f:
-                invalid_count = len([l for l in f.readlines() if l.strip()])
+        # Parse result (can be dict or string)
+        if isinstance(result, dict):
+            success_count = result.get('success', 0)
+            failed_count = result.get('failed', 0)
+            total_count = result.get('total', 0)
+        else:
+            # Fallback: use session_stats if available
+            stats = session_stats.get(user_id, {})
+            success_count = stats.get('success', 0)
+            failed_count = stats.get('failed', 0)
+            total_count = stats.get('total', 0)
         
         # Header message
         await safe_send(channel, "✅ **Proses Redeem Selesai**")
         
-        # Summary embed
-        if success_count > 0:
-            color = 0x2ecc71  # Green
+        # Determine color and status
+        if success_count > 0 and failed_count == 0:
+            color = 0x2ecc71  # Green - all success
             status_emoji = "🎉"
-            status_text = "Berhasil"
-        elif invalid_count > 0:
-            color = 0xe67e22  # Orange
+            status_text = "Sempurna"
+        elif success_count > 0:
+            color = 0xe67e22  # Orange - mixed
             status_emoji = "⚠️"
             status_text = "Selesai dengan Peringatan"
-        else:
-            color = 0xe74c3c  # Red
+        elif failed_count > 0:
+            color = 0xe74c3c  # Red - all failed
             status_emoji = "❌"
             status_text = "Tidak Ada Kode Valid"
+        else:
+            color = 0x95a5a6  # Gray - no data
+            status_emoji = "ℹ️"
+            status_text = "Selesai"
         
+        # Summary embed
         embed = discord.Embed(
             title=f"{status_emoji} Hasil Redeem Code",
             description="Berikut adalah ringkasan proses redeem Anda:",
@@ -221,77 +254,128 @@ async def safe_send_completion(channel, user_id, result):
         )
         embed.add_field(
             name="❌ Kode Invalid/Gagal", 
-            value=f"**{invalid_count}** kode", 
+            value=f"**{failed_count}** kode", 
             inline=True
         )
         embed.add_field(
-            name="📁 File Log",
-            value=f"`{success_file}`\n`{invalid_file}`",
-            inline=False
+            name="📦 Total Diproses",
+            value=f"**{total_count}** kode",
+            inline=True
         )
         
-        if success_count > 0:
+        # Success rate
+        if total_count > 0:
+            success_rate = (success_count / total_count) * 100
             embed.add_field(
-                name="💡 Informasi",
-                value="Kode yang berhasil telah tersimpan dan siap digunakan.",
-                inline=False
-            )
-        else:
-            embed.add_field(
-                name="💡 Saran",
-                value="Pastikan kode yang Anda masukkan valid dan belum pernah digunakan.",
-                inline=False
+                name="📊 Success Rate",
+                value=f"**{success_rate:.1f}%**",
+                inline=True
             )
         
-        embed.set_footer(text=f"Status: {status_text} • {datetime.now().strftime('%d/%m/%Y %H:%M')}")
+        embed.set_footer(
+            text=f"Status: {status_text} • {config.format_wib_datetime()}"
+        )
         
         await safe_send(channel, embed=embed)
         
+        # File upload section
+        success_file = session_files.get('success')
+        invalid_file = session_files.get('invalid')
+        
+        files_to_upload = []
+        file_descriptions = []
+        
+        # Check and prepare success file
+        if success_file and os.path.exists(success_file):
+            size = os.path.getsize(success_file)
+            if size > 0:
+                files_to_upload.append(discord.File(success_file, filename=f"success_{user_id}.txt"))
+                file_descriptions.append(f"✅ **Success Log** - {success_count} kode berhasil")
+        
+        # Check and prepare invalid file
+        if invalid_file and os.path.exists(invalid_file):
+            size = os.path.getsize(invalid_file)
+            if size > 0:
+                files_to_upload.append(discord.File(invalid_file, filename=f"invalid_{user_id}.txt"))
+                file_descriptions.append(f"❌ **Invalid Log** - {failed_count} kode gagal")
+        
+        # Send files if any
+        if files_to_upload:
+            file_embed = discord.Embed(
+                title="📁 File Log Detail",
+                description="\n".join(file_descriptions) + "\n\n💡 Download file untuk melihat detail setiap kode.",
+                color=0x3498db
+            )
+            file_embed.set_footer(text="File log akan otomatis terhapus setelah channel ditutup")
+            
+            await channel.send(embed=file_embed, files=files_to_upload)
+        elif total_count > 0:
+            # Has codes but no log files
+            await safe_send(channel, 
+                "ℹ️ Tidak ada file log (semua kode mungkin error atau tidak terproses)"
+            )
+        
+        # Mark completion time for auto-close
+        channel_completion_time[channel.id] = config.get_wib_time().timestamp()
+        
+        # Send auto-close info
+        await asyncio.sleep(2)  # Small delay
+        close_info = discord.Embed(
+            title="ℹ️ Informasi Channel",
+            description=f"Channel ini akan **otomatis tertutup** dalam **2 jam** "
+                       f"setelah tidak ada aktivitas.\n\n"
+                       f"💡 Anda akan menerima peringatan 10 menit sebelum channel ditutup.",
+            color=0x3498db
+        )
+        close_info.set_footer(text="Kirim pesan apa saja untuk reset timer inactivity")
+        await safe_send(channel, embed=close_info)
+        
     except Exception as e:
         print(f"⚠️ Error sending completion: {e}")
+        traceback.print_exc()
         # Fallback simple message
-        await safe_send(channel, "✅ Proses redeem selesai. Silakan cek file log untuk detail.")
+        await safe_send(channel, f"✅ Proses redeem selesai. Berhasil: {success_count}, Gagal: {failed_count}")
 
 # ==============================
-# Live Log Update
+# Live Log Update (Single Message Edit)
 # ==============================
 async def update_live_panel(channel):
-    """Update live log panel dengan throttling"""
+    """Update live log panel dengan single message edit"""
     try:
-        if channel.id not in live_panel_message:
-            msg = await safe_send(channel, embed=discord.Embed(
-                title="📊 Status Redeem",
-                description="Memulai proses...",
-                color=0x3498db
-            ))
-            if msg:
-                live_panel_message[channel.id] = msg
-
-        # Throttling
-        last = last_update.get(channel.id, 0)
-        now = asyncio.get_event_loop().time()
-        if now - last < 3:  # Update setiap 3 detik
-            return
-
+        # Get recent logs
         log_lines = live_logs.get(channel.id, [])
-        recent_logs = log_lines[-8:] if log_lines else ["Menunggu proses..."]
+        recent_logs = log_lines[-10:] if log_lines else ["⏳ Memulai proses..."]
         
+        # Create embed
         embed = discord.Embed(
             title="📊 Status Redeem",
             description="\n".join(recent_logs),
             color=0x3498db
         )
-        embed.set_footer(text="Log diperbarui setiap beberapa detik")
+        embed.set_footer(text=f"Log diperbarui secara real-time • {config.format_wib_time_only()}")
         
-        if channel.id in live_panel_message:
-            await live_panel_message[channel.id].edit(embed=embed)
+        # Create or edit single message
+        if channel.id not in live_status_message:
+            # First time - create new message
+            msg = await safe_send(channel, embed=embed)
+            if msg:
+                live_status_message[channel.id] = msg
+        else:
+            # Edit existing message
+            try:
+                await live_status_message[channel.id].edit(embed=embed)
+            except discord.NotFound:
+                # Message deleted, create new one
+                msg = await safe_send(channel, embed=embed)
+                if msg:
+                    live_status_message[channel.id] = msg
+            except discord.HTTPException as e:
+                # Rate limit or other error, skip this update
+                print(f"⚠️ Could not update status: {e}")
         
-        last_update[channel.id] = now
+        # Update activity timestamp
+        channel_last_activity[channel.id] = config.get_wib_time().timestamp()
         
-    except discord.NotFound:
-        # Message deleted, remove from tracking
-        if channel.id in live_panel_message:
-            del live_panel_message[channel.id]
     except Exception as e:
         print(f"⚠️ Error updating live panel: {e}")
 
@@ -303,6 +387,63 @@ def make_progress_callback(channel):
         live_logs[channel.id].append(text)
         asyncio.run_coroutine_threadsafe(update_live_panel(channel), bot.loop)
     return progress_callback
+
+# ==============================
+# File Management Utilities
+# ==============================
+def get_session_files(user_id):
+    """Get all session-related files for a user"""
+    timestamp = int(time.time())
+    return {
+        'code_temp': f"code_temp_{user_id}.txt",
+        'success': f"success_{user_id}_{timestamp}.txt",
+        'invalid': f"invalid_{user_id}_{timestamp}.txt",
+        'timestamp': timestamp
+    }
+
+def cleanup_old_session_files(user_id):
+    """Clean up old session files before starting new session"""
+    import glob
+    patterns = [
+        f"code_temp_{user_id}.txt",
+        f"success_{user_id}_*.txt",
+        f"invalid_{user_id}_*.txt",
+        f"success_{user_id}.txt",  # Legacy format
+        f"invalid_{user_id}.txt"   # Legacy format
+    ]
+    
+    cleaned = 0
+    for pattern in patterns:
+        for file in glob.glob(pattern):
+            try:
+                os.remove(file)
+                cleaned += 1
+                print(f"🧹 Cleaned: {file}")
+            except Exception as e:
+                print(f"⚠️ Could not clean {file}: {e}")
+    
+    return cleaned
+
+def cleanup_session_files(user_id, session_files=None):
+    """Clean up session files after completion"""
+    if session_files is None:
+        # Clean all files for user
+        return cleanup_old_session_files(user_id)
+    
+    cleaned = 0
+    for file_type, file_path in session_files.items():
+        if file_type == 'timestamp':
+            continue
+        
+        if os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+                cleaned += 1
+                print(f"🧹 Cleaned: {file_path}")
+            except Exception as e:
+                print(f"⚠️ Could not clean {file_path}: {e}")
+    
+    return cleaned
 
 # ==============================
 # Bot Setup with Slash Commands
@@ -728,20 +869,21 @@ class PrivateChannelButtons(ui.View):
         )
         
         embed.add_field(
-            name="🌍 Region Tersedia",
-            value="`hk` - Hong Kong\n"
-                  "`sg` - Singapore\n"
-                  "`us` - United States\n"
-                  "`tw` - Taiwan\n"
-                  "`th` - Thailand",
+            name="📱 Versi Android",
+            value="Pilih dengan angka:\n"
+                  "`1` - Android 8.1\n"
+                  "`2` - Android 10\n"
+                  "`3` - Android 12\n"
+                  "`4` - Android 15",
             inline=False
         )
         
         embed.add_field(
-            name="📱 Versi Android",
-            value="`1` - Android 8.1\n"
-                  "`2` - Android 10\n"
-                  "`3` - Android 12",
+            name="🌍 Region",
+            value="Pilih dari dropdown menu (bisa multiple):\n"
+                  "🇭🇰 Hong Kong 2 • 🇭🇰 Hong Kong\n"
+                  "🇹🇭 Thailand • 🇸🇬 Singapore\n"
+                  "🇹🇼 Taiwan • 🇺🇸 United States",
             inline=False
         )
         
@@ -1139,78 +1281,226 @@ class TopupModal(ui.Modal, title="💰 Top Up Saldo"):
                 pass
 
 # ==============================
-# Redeem Modal
+# Region Select Components (Step 2: Region Selection)
 # ==============================
-class RedeemModal(ui.Modal, title="📋 Parameter Akun Redeem"):
+class RegionSelect(ui.Select):
+    """Multi-select dropdown for region selection"""
+    
+    def __init__(self, user_id: int):
+        self.user_id = user_id
+        
+        # Build options from config
+        options = []
+        for region_opt in config.REGION_SELECT_OPTIONS:
+            options.append(
+                discord.SelectOption(
+                    label=region_opt['label'],
+                    value=region_opt['value'],
+                    emoji=region_opt['emoji'],
+                    description=region_opt['description']
+                )
+            )
+        
+        super().__init__(
+            placeholder="🌍 Pilih region (bisa lebih dari 1)...",
+            min_values=1,  # At least 1 region
+            max_values=len(options),  # Can select all
+            options=options,
+            custom_id=f"region_select_{user_id}"
+        )
+    
+    async def callback(self, interaction: Interaction):
+        """Handle region selection"""
+        try:
+            # Get selected regions
+            selected_regions = self.values
+            
+            # Verify user data exists
+            if self.user_id not in user_data:
+                return await interaction.response.send_message(
+                    "❌ Data tidak ditemukan. Silakan isi parameter kembali.",
+                    ephemeral=True
+                )
+            
+            # Update user data with selected regions
+            user_data[self.user_id]["region"] = " ".join(selected_regions)
+            user_data[self.user_id]["step"] = "ready_for_upload"
+            
+            # Get region names for display
+            region_names = []
+            for region_code in selected_regions:
+                region_info = config.get_region_info(region_code)
+                if region_info:
+                    emoji = next((r['emoji'] for r in config.REGION_SELECT_OPTIONS if r['value'] == region_code), '🌍')
+                    region_names.append(f"{emoji} {region_info['name']}")
+            
+            # Get android info for summary
+            android_version = user_data[self.user_id]["android_version"]
+            android_name = config.get_android_name(android_version)
+            
+            # Create confirmation embed
+            embed = discord.Embed(
+                title="✅ Setup Selesai!",
+                description="Semua parameter telah dikonfigurasi. Anda siap untuk redeem!",
+                color=0x2ecc71
+            )
+            embed.add_field(
+                name="📧 Email",
+                value=user_data[self.user_id]["email"],
+                inline=False
+            )
+            embed.add_field(
+                name="📱 Android Version",
+                value=android_name,
+                inline=True
+            )
+            embed.add_field(
+                name="🌍 Regions Dipilih",
+                value="\n".join(region_names),
+                inline=True
+            )
+            embed.add_field(
+                name="📁 Langkah Terakhir",
+                value="Silakan upload file **`code.txt`** yang berisi kode redeem Anda.\n\n"
+                      "**Format file:**\n"
+                      "• Satu kode per baris\n"
+                      "• Format: `XXXX-XXXX-XXXX` atau `XXXXXXXXXXXX`\n"
+                      f"• Maksimal: **{config.MAX_CODES_PER_UPLOAD}** kode per upload",
+                inline=False
+            )
+            embed.set_footer(
+                text="💡 Tip: File akan diproses otomatis setelah upload",
+                icon_url=interaction.client.user.display_avatar.url if interaction.client.user.display_avatar else None
+            )
+            
+            # Disable the select menu (no longer needed)
+            self.disabled = True
+            await interaction.response.edit_message(view=self.view)
+            
+            # Send confirmation in new message
+            await interaction.followup.send(embed=embed, ephemeral=False)
+            
+        except Exception as e:
+            print(f"❌ Error in RegionSelect callback: {e}")
+            traceback.print_exc()
+            await interaction.response.send_message(
+                "❌ Terjadi kesalahan saat memproses pilihan region. Silakan coba lagi.",
+                ephemeral=True
+            )
+
+class RegionSelectView(ui.View):
+    """View containing the region selection dropdown"""
+    
+    def __init__(self, user_id: int):
+        super().__init__(timeout=300)  # 5 minutes timeout
+        self.user_id = user_id
+        self.add_item(RegionSelect(user_id))
+    
+    async def on_timeout(self):
+        """Handle timeout"""
+        # Disable all components
+        for item in self.children:
+            item.disabled = True
+
+# ==============================
+# Redeem Modal (Step 1: Basic Info)
+# ==============================
+class RedeemModal(ui.Modal, title="📋 Setup Akun Redeem"):
     email = ui.TextInput(
         label="Email",
         placeholder="Email akun CloudEmulator Anda"
     )
     password = ui.TextInput(
         label="Password",
-        placeholder="Password akun",
+        placeholder="Minimal 6 karakter",
         style=discord.TextStyle.short
-    )
-    region = ui.TextInput(
-        label="Region",
-        placeholder="Contoh: hk sg th (pisahkan dengan spasi)"
     )
     android = ui.TextInput(
         label="Versi Android",
-        placeholder="Pilih: 1 (Android 8.1) | 2 (Android 10) | 3 (Android 12)"
+        placeholder="1=8.1 | 2=10 | 3=12 | 4=15",
+        min_length=1,
+        max_length=1
     )
 
     async def on_submit(self, interaction: Interaction):
         try:
-            android_choice = int(self.android.value.strip())
-            if android_choice not in [1, 2, 3]:
-                raise ValueError()
-        except:
-            return await interaction.response.send_message(
-                "❌ Versi Android tidak valid. Pilih: **1** (Android 8.1), **2** (Android 10), atau **3** (Android 12)",
-                ephemeral=True
+            # Validate android number
+            android_number = self.android.value.strip()
+            
+            if not config.is_valid_android_number(android_number):
+                return await interaction.response.send_message(
+                    "❌ **Versi Android tidak valid!**\n\n"
+                    "Pilih salah satu:\n"
+                    "• **1** - Android 8.1\n"
+                    "• **2** - Android 10\n"
+                    "• **3** - Android 12\n"
+                    "• **4** - Android 15",
+                    ephemeral=True
+                )
+            
+            # Convert number to version
+            android_version = config.get_android_version_from_number(android_number)
+            android_name = config.get_android_name(android_version)
+            
+            # Basic email validation
+            email = self.email.value.strip()
+            if '@' not in email or '.' not in email:
+                return await interaction.response.send_message(
+                    "❌ **Format email tidak valid!**\n\n"
+                    "Pastikan email Anda mengandung @ dan domain yang valid.",
+                    ephemeral=True
+                )
+            
+            # Basic password validation
+            password = self.password.value.strip()
+            if len(password) < 6:
+                return await interaction.response.send_message(
+                    "❌ **Password terlalu pendek!**\n\n"
+                    "Password minimal 6 karakter untuk keamanan akun Anda.",
+                    ephemeral=True
+                )
+
+            # Store partial data (will be completed after region selection)
+            user_data[interaction.user.id] = {
+                "email": email,
+                "password": password,
+                "android_version": android_version,
+                "android_number": android_number,
+                "user": interaction.user,
+                "step": "awaiting_region"  # Track progress
+            }
+
+            # Create region selection view
+            region_view = RegionSelectView(interaction.user.id)
+            
+            embed = discord.Embed(
+                title="✅ Informasi Akun Tersimpan",
+                description="Data akun Anda telah tersimpan dengan aman.",
+                color=0x2ecc71
+            )
+            embed.add_field(name="📧 Email", value=email, inline=False)
+            embed.add_field(name="📱 Android", value=f"{android_name} (Pilihan: {android_number})", inline=True)
+            embed.add_field(
+                name="🌍 Langkah Selanjutnya",
+                value="Pilih **region** untuk redeem menggunakan menu di bawah.\n"
+                      "Anda bisa memilih **lebih dari 1 region**.",
+                inline=False
+            )
+            embed.set_footer(text="💡 Tip: Pilih beberapa region untuk meningkatkan peluang sukses")
+
+            await interaction.response.send_message(
+                embed=embed, 
+                view=region_view,
+                ephemeral=False
             )
 
-        # Validasi region
-        valid_regions = ['hk', 'sg', 'us', 'tw', 'th']
-        region_input = self.region.value.strip().lower()
-        regions = region_input.split()
-        
-        invalid_regions = [r for r in regions if r not in valid_regions]
-        if invalid_regions:
-            return await interaction.response.send_message(
-                f"❌ Region tidak valid: **{', '.join(invalid_regions)}**\n\n"
-                f"Region yang tersedia: **hk, sg, us, tw, th**",
+        except Exception as e:
+            print(f"❌ Error in RedeemModal: {e}")
+            traceback.print_exc()
+            await interaction.response.send_message(
+                "❌ Terjadi kesalahan saat memproses data. Silakan coba lagi.",
                 ephemeral=True
             )
-
-        user_data[interaction.user.id] = {
-            "email": self.email.value.strip(),
-            "password": self.password.value.strip(),
-            "region": region_input,
-            "android_choice": android_choice,
-            "user": interaction.user
-        }
-
-        android_names = {1: "Android 8.1", 2: "Android 10", 3: "Android 12"}
-        
-        embed = discord.Embed(
-            title="✅ Parameter Berhasil Disimpan",
-            description="Informasi akun Anda telah tersimpan dengan aman.",
-            color=0x2ecc71
-        )
-        embed.add_field(name="📧 Email", value=self.email.value, inline=False)
-        embed.add_field(name="🌏 Region", value=region_input.upper(), inline=True)
-        embed.add_field(name="📱 Android", value=android_names[android_choice], inline=True)
-        embed.add_field(
-            name="📁 Langkah Selanjutnya",
-            value="Silakan upload file **`code.txt`** yang berisi kode redeem Anda.\n"
-                  "Format: satu kode per baris",
-            inline=False
-        )
-        embed.set_footer(text="Data Anda aman dan akan dihapus setelah proses selesai")
-
-        await interaction.response.send_message(embed=embed, ephemeral=False)
 
 # ==============================
 # File Upload Handler
@@ -1296,7 +1586,7 @@ async def on_message(message: discord.Message):
                     "email": user_info["email"],
                     "password": user_info["password"],
                     "region": user_info["region"],
-                    "android_choice": user_info["android_choice"],
+                    "android_version": user_info["android_version"],  # Updated parameter name
                     "channel": message.channel,
                     "code_file": temp_code_file
                 })

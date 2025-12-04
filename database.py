@@ -4,16 +4,22 @@ import time
 from datetime import datetime
 from contextlib import contextmanager
 from functools import wraps
+import config
 
-DB_FILE = "bot_database.db"
+DB_FILE = config.DB_FILE
 db_lock = threading.RLock()
 
 # ==========================================
 # RETRY DECORATOR
 # ==========================================
 
-def retry_on_database_lock(max_attempts=5, delay=0.1):
+def retry_on_database_lock(max_attempts=None, delay=None):
     """Decorator untuk retry operasi database saat terjadi lock"""
+    if max_attempts is None:
+        max_attempts = config.DB_MAX_RETRY_ATTEMPTS
+    if delay is None:
+        delay = config.DB_RETRY_DELAY
+    
     def decorator(func):
         @wraps(func)
         def wrapper(*args, **kwargs):
@@ -35,7 +41,7 @@ def retry_on_database_lock(max_attempts=5, delay=0.1):
 def get_db():
     """Context manager untuk koneksi database thread-safe dengan timeout"""
     with db_lock:
-        conn = sqlite3.connect(DB_FILE, timeout=30.0)
+        conn = sqlite3.connect(DB_FILE, timeout=config.DB_TIMEOUT)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")  # Write-Ahead Logging untuk concurrency
         try:
