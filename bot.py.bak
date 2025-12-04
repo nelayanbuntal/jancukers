@@ -1,6 +1,6 @@
 import discord
 from discord.ext import commands
-from discord import ui, Interaction, app_commands
+from discord import ui, Interaction
 import asyncio
 import random
 import os
@@ -305,16 +305,9 @@ def make_progress_callback(channel):
     return progress_callback
 
 # ==============================
-# Bot Setup with Slash Commands
+# Bot Setup - FIXED: Disable built-in help command
 # ==============================
 class MyBot(commands.Bot):
-    def __init__(self):
-        super().__init__(
-            command_prefix="!",
-            intents=intents,
-            help_command=None
-        )
-        
     async def setup_hook(self):
         """Initialize bot components"""
         try:
@@ -329,36 +322,20 @@ class MyBot(commands.Bot):
             
             # Add persistent views
             self.add_view(MainMenuView())
-            self.add_view(PrivateChannelButtons())
+            self.add_view(StartFormButton())
+            self.add_view(UserHelpView())
             self.add_view(AdminControlPanel())
             print("✅ Persistent views added")
-            
-            # Sync slash commands - FIXED: Force sync for all guilds
-            try:
-                # Global sync (takes up to 1 hour)
-                synced = await self.tree.sync()
-                print(f"✅ Synced {len(synced)} global command(s)")
-                
-                # Guild-specific sync for instant availability (optional but recommended)
-                for guild in self.guilds:
-                    try:
-                        guild_synced = await self.tree.sync(guild=guild)
-                        print(f"✅ Synced {len(guild_synced)} command(s) for guild: {guild.name}")
-                    except Exception as e:
-                        print(f"⚠️ Failed to sync for guild {guild.name}: {e}")
-                        
-            except Exception as e:
-                print(f"⚠️ Failed to sync commands: {e}")
-                print(traceback.format_exc())
             
         except Exception as e:
             print(f"❌ Setup error: {e}")
             print(traceback.format_exc())
 
-bot = MyBot()
+# Disable built-in help command
+bot = MyBot(command_prefix="!", intents=intents, help_command=None)
 
 # ==============================
-# Main Menu View (Public Channel)
+# Main Menu View
 # ==============================
 class MainMenuView(ui.View):
     def __init__(self):
@@ -367,8 +344,7 @@ class MainMenuView(ui.View):
     @ui.button(
         label="🎮 Mulai Redeem",
         style=discord.ButtonStyle.green,
-        custom_id="start_redeem_button",
-        row=0
+        custom_id="start_redeem_button"
     )
     async def start_redeem(self, interaction: Interaction, button: ui.Button):
         """Buat channel privat untuk redeem"""
@@ -461,9 +437,9 @@ class MainMenuView(ui.View):
                       "• Satu baris untuk satu kode",
                 inline=False
             )
-            welcome_embed.set_footer(text="Gunakan tombol di bawah untuk bantuan atau menutup channel")
+            welcome_embed.set_footer(text="Channel ini akan otomatis terhapus setelah selesai")
 
-            await redeem_channel.send(embed=welcome_embed, view=PrivateChannelButtons())
+            await redeem_channel.send(embed=welcome_embed, view=StartFormButton())
             
         except Exception as e:
             print(f"❌ Error creating channel: {e}")
@@ -475,8 +451,7 @@ class MainMenuView(ui.View):
     @ui.button(
         label="💰 Top Up Saldo",
         style=discord.ButtonStyle.blurple,
-        custom_id="topup_button",
-        row=0
+        custom_id="topup_button"
     )
     async def topup(self, interaction: Interaction, button: ui.Button):
         """Buka modal topup"""
@@ -490,8 +465,7 @@ class MainMenuView(ui.View):
     @ui.button(
         label="💳 Info Saldo",
         style=discord.ButtonStyle.gray,
-        custom_id="check_balance_button",
-        row=0
+        custom_id="check_balance_button"
     )
     async def check_balance(self, interaction: Interaction, button: ui.Button):
         """Cek saldo user"""
@@ -521,107 +495,9 @@ class MainMenuView(ui.View):
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @ui.button(
-        label="📊 Status Bot",
-        style=discord.ButtonStyle.gray,
-        custom_id="bot_status_button",
-        row=1
-    )
-    async def bot_status(self, interaction: Interaction, button: ui.Button):
-        """Tampilkan status bot untuk user"""
-        try:
-            queue_count = get_redeem_queue_count()
-            
-            # Worker status
-            workers_active = sum(1 for s in worker_status.values() if s == "processing")
-            workers_idle = sum(1 for s in worker_status.values() if s == "idle")
-            workers_total = config.MAX_LOGIN_WORKERS
-            
-            # Status color
-            if workers_idle >= workers_total * 0.5:
-                color = 0x2ecc71  # Green - Banyak worker tersedia
-                status_text = "🟢 Optimal"
-            elif workers_idle > 0:
-                color = 0xf39c12  # Orange - Sedang sibuk
-                status_text = "🟡 Sibuk"
-            else:
-                color = 0xe74c3c  # Red - Semua worker sibuk
-                status_text = "🔴 Penuh"
-            
-            embed = discord.Embed(
-                title="📊 Status Bot",
-                description=f"Status: **{status_text}**",
-                color=color
-            )
-            
-            # Worker info
-            embed.add_field(
-                name="⚙️ Workers",
-                value=f"• Tersedia: **{workers_idle}**\n"
-                      f"• Sedang Bekerja: **{workers_active}**\n"
-                      f"• Total: **{workers_total}**",
-                inline=True
-            )
-            
-            # Queue info
-            queue_status = "✅ Kosong" if queue_count == 0 else f"⏳ {queue_count} task"
-            embed.add_field(
-                name="📦 Antrian",
-                value=queue_status,
-                inline=True
-            )
-            
-            # Estimasi waktu tunggu
-            if queue_count == 0:
-                wait_time = "Langsung diproses"
-            elif workers_idle > 0:
-                wait_time = "< 5 menit"
-            else:
-                est_minutes = (queue_count * 3)
-                wait_time = f"~{est_minutes} menit"
-            
-            embed.add_field(
-                name="⏱️ Estimasi Tunggu",
-                value=wait_time,
-                inline=False
-            )
-            
-            # Tips
-            if workers_idle == 0:
-                embed.add_field(
-                    name="💡 Tips",
-                    value="Semua worker sedang sibuk. Proses Anda akan dijalankan setelah ada worker yang tersedia.",
-                    inline=False
-                )
-            elif queue_count > 5:
-                embed.add_field(
-                    name="💡 Tips",
-                    value="Antrian sedang ramai. Anda bisa mulai redeem sekarang, proses akan berjalan otomatis.",
-                    inline=False
-                )
-            else:
-                embed.add_field(
-                    name="💡 Tips",
-                    value="Bot sedang dalam kondisi optimal. Waktu yang tepat untuk memulai redeem!",
-                    inline=False
-                )
-            
-            embed.timestamp = datetime.now()
-            embed.set_footer(text="Data real-time • Refresh untuk update terbaru")
-            
-            await interaction.response.send_message(embed=embed, ephemeral=True)
-            
-        except Exception as e:
-            print(f"❌ Error showing bot status: {e}")
-            await interaction.response.send_message(
-                "❌ Gagal mengambil status bot. Silakan coba lagi.",
-                ephemeral=True
-            )
-
-    @ui.button(
         label="ℹ️ Bantuan",
         style=discord.ButtonStyle.gray,
-        custom_id="help_button",
-        row=1
+        custom_id="help_button"
     )
     async def help_menu(self, interaction: Interaction, button: ui.Button):
         """Tampilkan menu bantuan"""
@@ -665,6 +541,15 @@ class MainMenuView(ui.View):
         )
         
         embed.add_field(
+            name="📝 Command Tersedia",
+            value="`!saldo` - Cek saldo Anda\n"
+                  "`!stats` - Lihat statistik lengkap\n"
+                  "`!close` - Tutup channel redeem\n"
+                  "`!help` - Panduan lengkap",
+            inline=False
+        )
+        
+        embed.add_field(
             name="❓ Butuh Bantuan?",
             value="Hubungi admin jika mengalami kendala atau ada pertanyaan.",
             inline=False
@@ -675,26 +560,16 @@ class MainMenuView(ui.View):
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 # ==============================
-# Private Channel Buttons (with Close button)
+# User Help View (untuk private channel)
 # ==============================
-class PrivateChannelButtons(ui.View):
+class UserHelpView(ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
     @ui.button(
-        label="📝 Input Parameter",
-        style=discord.ButtonStyle.blurple,
-        custom_id="input_parameter_button",
-        row=0
-    )
-    async def open_form(self, interaction: Interaction, button: ui.Button):
-        await interaction.response.send_modal(RedeemModal())
-
-    @ui.button(
-        label="📖 Bantuan",
+        label="📖 Bantuan & Command",
         style=discord.ButtonStyle.gray,
-        custom_id="private_help_button",
-        row=0
+        custom_id="user_help_view_button"
     )
     async def show_help(self, interaction: Interaction, button: ui.Button):
         """Show help in private channel"""
@@ -718,6 +593,14 @@ class PrivateChannelButtons(ui.View):
             value=f"• Biaya per kode: **{format_rupiah(config.REDEEM_COST_PER_CODE)}**\n"
                   f"• Maksimal upload: **{config.MAX_CODES_PER_UPLOAD} kode**\n"
                   f"• Biaya dipotong otomatis dari saldo",
+            inline=False
+        )
+        
+        embed.add_field(
+            name="📝 Command Berguna",
+            value="`!saldo` - Cek saldo Anda\n"
+                  "`!stats` - Lihat statistik redeem\n"
+                  "`!close` - Tutup channel ini",
             inline=False
         )
         
@@ -757,44 +640,6 @@ class PrivateChannelButtons(ui.View):
         embed.set_footer(text="Butuh bantuan lebih? Hubungi admin")
         
         await interaction.response.send_message(embed=embed, ephemeral=True)
-
-    @ui.button(
-        label="🚪 Tutup Channel",
-        style=discord.ButtonStyle.red,
-        custom_id="close_channel_button",
-        row=0
-    )
-    async def close_channel(self, interaction: Interaction, button: ui.Button):
-        """Tutup channel redeem"""
-        if not interaction.channel.name.startswith("redeem-"):
-            return await interaction.response.send_message(
-                "ℹ️ Button ini hanya bisa digunakan di channel redeem.",
-                ephemeral=True
-            )
-        
-        user = interaction.user
-        is_owner = user.id in active_channels and active_channels[user.id] == interaction.channel.id
-        admin_role = discord.utils.get(interaction.guild.roles, name=config.ADMIN_ROLE_NAME)
-        is_admin = admin_role in user.roles if admin_role else False
-        
-        if not (is_owner or is_admin):
-            return await interaction.response.send_message(
-                "❌ Anda tidak memiliki izin untuk menutup channel ini.",
-                ephemeral=True
-            )
-        
-        if user.id in active_channels:
-            active_channels.pop(user.id)
-        
-        await interaction.response.send_message(
-            "👋 Channel ini akan ditutup dalam 5 detik. Terima kasih telah menggunakan layanan kami!"
-        )
-        await asyncio.sleep(5)
-        
-        try:
-            await interaction.channel.delete(reason=f"Ditutup oleh {user.name}")
-        except:
-            pass
 
 # ==============================
 # Admin Control Panel
@@ -912,23 +757,44 @@ class AdminControlPanel(ui.View):
         
         embed.add_field(
             name="💰 Balance Management",
-            value="`/admin addbalance @user [amount]`\n"
+            value="`!addbalance @user [amount]`\n"
                   "Add balance to specific user manually",
             inline=False
         )
         
         embed.add_field(
             name="👥 User Management",
-            value="`/admin checkuser @user`\n"
+            value="`!checkuser @user`\n"
                   "View detailed user statistics and info",
             inline=False
         )
         
         embed.add_field(
+            name="💳 Transaction Management",
+            value="`!checktransaction [order_id]`\n"
+                  "Check transaction details by Order ID",
+            inline=False
+        )
+        
+        embed.add_field(
             name="📊 System Monitoring",
-            value="`/admin botstats`\n"
+            value="`!botstats`\n"
                   "View comprehensive bot statistics\n\n"
                   "Or use the **📊 System Stats** button above",
+            inline=False
+        )
+        
+        embed.add_field(
+            name="📢 Communication",
+            value="`!broadcast [message]`\n"
+                  "Send announcement to all users (requires confirmation)",
+            inline=False
+        )
+        
+        embed.add_field(
+            name="ℹ️ Help",
+            value="`!adminhelp`\n"
+                  "Show this admin commands list",
             inline=False
         )
         
@@ -946,6 +812,7 @@ class AdminControlPanel(ui.View):
             name="⚠️ Important Notes",
             value="• All admin actions are logged\n"
                   "• Use commands responsibly\n"
+                  "• Broadcast requires confirmation\n"
                   "• Balance changes are permanent",
             inline=False
         )
@@ -1137,6 +1004,98 @@ class TopupModal(ui.Modal, title="💰 Top Up Saldo"):
                 )
             except:
                 pass
+
+# ==============================
+# Start Form Button
+# ==============================
+class StartFormButton(ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @ui.button(
+        label="📝 Input Parameter",
+        style=discord.ButtonStyle.blurple,
+        custom_id="input_parameter_button",
+        row=0
+    )
+    async def open_form(self, interaction: Interaction, button: ui.Button):
+        await interaction.response.send_modal(RedeemModal())
+
+    @ui.button(
+        label="📖 Bantuan",
+        style=discord.ButtonStyle.gray,
+        custom_id="private_help_button",
+        row=0
+    )
+    async def show_help(self, interaction: Interaction, button: ui.Button):
+        """Show help in private channel"""
+        embed = discord.Embed(
+            title="📖 Bantuan & Command",
+            description="Panduan lengkap untuk channel redeem ini:",
+            color=0x3498db
+        )
+        
+        embed.add_field(
+            name="🔹 Cara Mulai Redeem",
+            value="1. Klik tombol **📝 Input Parameter**\n"
+                  "2. Isi email, password, region, dan versi Android\n"
+                  "3. Upload file `code.txt` berisi kode redeem\n"
+                  "4. Tunggu proses selesai",
+            inline=False
+        )
+        
+        embed.add_field(
+            name="💰 Informasi Biaya",
+            value=f"• Biaya per kode: **{format_rupiah(config.REDEEM_COST_PER_CODE)}**\n"
+                  f"• Maksimal upload: **{config.MAX_CODES_PER_UPLOAD} kode**\n"
+                  f"• Biaya dipotong otomatis dari saldo",
+            inline=False
+        )
+        
+        embed.add_field(
+            name="📝 Command Berguna",
+            value="`!saldo` - Cek saldo Anda\n"
+                  "`!stats` - Lihat statistik redeem\n"
+                  "`!close` - Tutup channel ini",
+            inline=False
+        )
+        
+        embed.add_field(
+            name="📋 Format File code.txt",
+            value="```\nDMA4-FY6T-ASFL\nABC1-XYZ2-DEF3\nGHI4-JKL5-MNO6\n```\nSatu kode per baris, tanpa spasi ekstra",
+            inline=False
+        )
+        
+        embed.add_field(
+            name="🌍 Region Tersedia",
+            value="`hk` - Hong Kong\n"
+                  "`sg` - Singapore\n"
+                  "`us` - United States\n"
+                  "`tw` - Taiwan\n"
+                  "`th` - Thailand",
+            inline=False
+        )
+        
+        embed.add_field(
+            name="📱 Versi Android",
+            value="`1` - Android 8.1\n"
+                  "`2` - Android 10\n"
+                  "`3` - Android 12",
+            inline=False
+        )
+        
+        embed.add_field(
+            name="⚠️ Perhatian",
+            value="• Pastikan akun CloudEmulator valid\n"
+                  "• Kode yang invalid tidak akan di-refund\n"
+                  "• Proses mungkin memakan waktu beberapa menit\n"
+                  "• Jangan tutup channel saat proses berlangsung",
+            inline=False
+        )
+        
+        embed.set_footer(text="Butuh bantuan lebih? Hubungi admin")
+        
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
 # ==============================
 # Redeem Modal
@@ -1343,206 +1302,56 @@ async def on_message(message: discord.Message):
     await bot.process_commands(message)
 
 # ==============================
-# SLASH COMMANDS (Admin Only)
+# Commands
 # ==============================
+@bot.command(name='saldo')
+async def check_balance_command(ctx):
+    """Cek saldo Anda"""
+    balance = get_balance(ctx.author.id)
+    await ctx.send(f"💰 Saldo Anda: **{format_rupiah(balance)}**")
 
-# Create admin group
-admin_group = app_commands.Group(name="admin", description="Admin commands")
+@bot.command(name='stats')
+async def stats_command(ctx):
+    """Lihat statistik akun Anda"""
+    stats = get_user_stats(ctx.author.id)
+    
+    embed = discord.Embed(
+        title="📊 Statistik Akun Anda",
+        color=0x9b59b6
+    )
+    embed.add_field(name="💰 Saldo", value=format_rupiah(stats['balance']), inline=True)
+    embed.add_field(name="📈 Total Top Up", value=format_rupiah(stats['total_topup']), inline=True)
+    embed.add_field(name="📉 Total Pengeluaran", value=format_rupiah(stats['total_spent']), inline=True)
+    embed.add_field(name="✅ Redeem Berhasil", value=str(stats['success_redeem']), inline=True)
+    embed.add_field(name="❌ Redeem Gagal", value=str(stats['failed_redeem']), inline=True)
+    embed.add_field(name="📦 Total Redeem", value=str(stats['total_redeem']), inline=True)
+    embed.set_footer(text=f"User ID: {ctx.author.id}")
+    
+    await ctx.send(embed=embed)
 
-@admin_group.command(name="addbalance", description="Tambah saldo ke user")
-@app_commands.describe(user="User yang akan ditambah saldonya", amount="Jumlah saldo")
-async def admin_addbalance(interaction: Interaction, user: discord.Member, amount: int):
-    """[ADMIN] Tambah saldo manual"""
-    # Check admin
-    admin_role = discord.utils.get(interaction.guild.roles, name=config.ADMIN_ROLE_NAME)
-    if not admin_role or admin_role not in interaction.user.roles:
-        return await interaction.response.send_message("❌ Admin only!", ephemeral=True)
+@bot.command(name='close')
+async def close_channel_command(ctx):
+    """Tutup channel redeem privat"""
+    if not ctx.channel.name.startswith("redeem-"):
+        return await ctx.send("ℹ️ Command ini hanya bisa digunakan di channel redeem.")
+    
+    is_owner = ctx.author.id in active_channels and active_channels[ctx.author.id] == ctx.channel.id
+    admin_role = discord.utils.get(ctx.guild.roles, name=config.ADMIN_ROLE_NAME)
+    is_admin = admin_role in ctx.author.roles if admin_role else False
+    
+    if not (is_owner or is_admin):
+        return await ctx.send("❌ Anda tidak memiliki izin untuk menutup channel ini.")
+    
+    if ctx.author.id in active_channels:
+        active_channels.pop(ctx.author.id)
+    
+    await ctx.send("👋 Channel ini akan ditutup dalam 5 detik. Terima kasih telah menggunakan layanan kami!")
+    await asyncio.sleep(5)
     
     try:
-        if amount <= 0:
-            return await interaction.response.send_message("❌ Jumlah harus bernilai positif!", ephemeral=True)
-
-        if amount > 100000000:
-            return await interaction.response.send_message("⚠️ Jumlah terlalu besar! Maksimal Rp 100.000.000 per transaksi.", ephemeral=True)
-
-        from database import add_balance
-        new_balance = add_balance(user.id, amount)
-
-        embed = discord.Embed(
-            title="✅ Saldo Berhasil Ditambahkan",
-            color=0x2ecc71
-        )
-        embed.add_field(name="👤 User", value=user.mention, inline=False)
-        embed.add_field(name="➕ Jumlah Ditambahkan", value=format_rupiah(amount), inline=True)
-        embed.add_field(name="💰 Saldo Baru", value=format_rupiah(new_balance), inline=True)
-        embed.set_footer(text=f"Oleh: {interaction.user.name}")
-
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-
-        # Notify user
-        try:
-            user_embed = discord.Embed(
-                title="💰 Saldo Ditambahkan",
-                description=f"Admin telah menambahkan **{format_rupiah(amount)}** ke akun Anda!",
-                color=0x2ecc71
-            )
-            user_embed.add_field(name="💳 Saldo Baru", value=format_rupiah(new_balance), inline=False)
-            user_embed.set_footer(text="Terima kasih telah menggunakan layanan kami")
-            
-            await user.send(embed=user_embed)
-        except:
-            pass
-
-    except Exception as e:
-        print(f"❌ Error in addbalance: {e}")
-        print(traceback.format_exc())
-        await interaction.response.send_message("❌ Terjadi kesalahan.", ephemeral=True)
-
-@admin_group.command(name="checkuser", description="Cek detail user")
-@app_commands.describe(user="User yang akan dicek")
-async def admin_checkuser(interaction: Interaction, user: discord.Member):
-    """[ADMIN] Cek detail user"""
-    # Check admin
-    admin_role = discord.utils.get(interaction.guild.roles, name=config.ADMIN_ROLE_NAME)
-    if not admin_role or admin_role not in interaction.user.roles:
-        return await interaction.response.send_message("❌ Admin only!", ephemeral=True)
-    
-    try:
-        stats = get_user_stats(user.id)
-
-        embed = discord.Embed(
-            title=f"📊 Informasi User: {user.name}",
-            color=0x3498db
-        )
-        embed.set_thumbnail(url=user.display_avatar.url)
-        
-        embed.add_field(name="🆔 User ID", value=f"`{user.id}`", inline=False)
-        embed.add_field(name="💰 Saldo", value=format_rupiah(stats['balance']), inline=True)
-        embed.add_field(name="📈 Total Top Up", value=format_rupiah(stats['total_topup']), inline=True)
-        embed.add_field(name="📉 Total Pengeluaran", value=format_rupiah(stats['total_spent']), inline=True)
-        embed.add_field(name="📦 Total Redeem", value=str(stats['total_redeem']), inline=True)
-        embed.add_field(name="✅ Redeem Berhasil", value=str(stats['success_redeem']), inline=True)
-        embed.add_field(name="❌ Redeem Gagal", value=str(stats['failed_redeem']), inline=True)
-        
-        # Success rate
-        if stats['total_redeem'] > 0:
-            success_rate = (stats['success_redeem'] / stats['total_redeem']) * 100
-            embed.add_field(name="📊 Success Rate", value=f"{success_rate:.1f}%", inline=True)
-        
-        embed.set_footer(text=f"Dicek oleh: {interaction.user.name}")
-
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-
-    except Exception as e:
-        print(f"❌ Error in checkuser: {e}")
-        print(traceback.format_exc())
-        await interaction.response.send_message("❌ Terjadi kesalahan.", ephemeral=True)
-
-@admin_group.command(name="botstats", description="Statistik keseluruhan bot")
-async def admin_botstats(interaction: Interaction):
-    """[ADMIN] Bot statistics"""
-    # Check admin
-    admin_role = discord.utils.get(interaction.guild.roles, name=config.ADMIN_ROLE_NAME)
-    if not admin_role or admin_role not in interaction.user.roles:
-        return await interaction.response.send_message("❌ Admin only!", ephemeral=True)
-    
-    try:
-        stats = get_database_stats()
-        queue_count = get_redeem_queue_count()
-        
-        workers_active = sum(1 for s in worker_status.values() if s == "processing")
-        workers_idle = sum(1 for s in worker_status.values() if s == "idle")
-
-        embed = discord.Embed(
-            title="📊 Statistik Bot",
-            description="Ringkasan keseluruhan sistem",
-            color=0xe74c3c
-        )
-        
-        embed.add_field(
-            name="👥 User",
-            value=f"Total: **{stats['total_users']}** user",
-            inline=True
-        )
-        
-        embed.add_field(
-            name="💰 Saldo Sistem",
-            value=format_rupiah(stats['total_balance']),
-            inline=True
-        )
-        
-        embed.add_field(
-            name="📦 Antrian",
-            value=f"**{queue_count}** task",
-            inline=True
-        )
-        
-        embed.add_field(
-            name="📈 Top Up",
-            value=f"• Jumlah: **{stats['successful_topups']}** transaksi\n"
-                  f"• Total: {format_rupiah(stats['total_topup_amount'])}",
-            inline=False
-        )
-        
-        total_redeems = stats['successful_redeems'] + stats['failed_redeems']
-        success_rate = (stats['successful_redeems'] / total_redeems * 100) if total_redeems > 0 else 0
-        
-        embed.add_field(
-            name="🎮 Redeem",
-            value=f"• Berhasil: **{stats['successful_redeems']}**\n"
-                  f"• Gagal: **{stats['failed_redeems']}**\n"
-                  f"• Pending: **{stats['pending_redeems']}**\n"
-                  f"• Success Rate: **{success_rate:.1f}%**",
-            inline=False
-        )
-        
-        embed.add_field(
-            name="⚙️ Workers",
-            value=f"• Active: **{workers_active}**\n"
-                  f"• Idle: **{workers_idle}**\n"
-                  f"• Total: **{config.MAX_LOGIN_WORKERS}**",
-            inline=True
-        )
-        
-        embed.add_field(
-            name="🌐 System",
-            value=f"• Servers: **{len(bot.guilds)}**\n"
-                  f"• Active Sessions: **{len(active_channels)}**",
-            inline=True
-        )
-        
-        embed.set_footer(text=f"Bot aktif di {len(bot.guilds)} server")
-
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-
-    except Exception as e:
-        print(f"❌ Error in botstats: {e}")
-        print(traceback.format_exc())
-        await interaction.response.send_message("❌ Terjadi kesalahan.", ephemeral=True)
-
-# Register admin group to bot tree
-bot.tree.add_command(admin_group)
-
-# ==============================
-# Manual Sync Command (for troubleshooting)
-# ==============================
-@bot.command(name='sync')
-@commands.is_owner()
-async def sync_commands(ctx):
-    """Manual command sync (bot owner only)"""
-    try:
-        await ctx.send("🔄 Syncing commands...")
-        
-        # Global sync
-        synced = await bot.tree.sync()
-        
-        # Guild sync
-        guild_synced = await bot.tree.sync(guild=ctx.guild)
-        
-        await ctx.send(f"✅ Synced {len(synced)} global commands and {len(guild_synced)} guild commands!")
-    except Exception as e:
-        await ctx.send(f"❌ Error: {e}")
-        print(traceback.format_exc())
+        await ctx.channel.delete(reason=f"Ditutup oleh {ctx.author.name}")
+    except:
+        pass
 
 # ==============================
 # Error Handler
@@ -1551,10 +1360,24 @@ async def sync_commands(ctx):
 async def on_command_error(ctx, error):
     """Global error handler untuk commands"""
     if isinstance(error, commands.CommandNotFound):
+        return  # Ignore unknown commands
+    
+    if isinstance(error, commands.MissingPermissions):
+        await ctx.send("❌ Anda tidak memiliki izin untuk menggunakan command ini.")
         return
     
-    print(f"❌ Command error: {error}")
+    if isinstance(error, commands.BotMissingPermissions):
+        await ctx.send("❌ Bot tidak memiliki izin yang diperlukan untuk menjalankan command ini.")
+        return
+    
+    # Log unexpected errors
+    print(f"❌ Command error in {ctx.command}: {error}")
     print(traceback.format_exc())
+    
+    await ctx.send(
+        "❌ Terjadi kesalahan saat menjalankan command. "
+        "Silakan coba lagi atau hubungi admin jika masalah berlanjut."
+    )
 
 # ==============================
 # Ready Event & Admin Channel Setup
@@ -1570,7 +1393,7 @@ async def on_ready():
         await bot.change_presence(
             activity=discord.Activity(
                 type=discord.ActivityType.watching,
-                name="redeem codes | Use buttons"
+                name="redeem codes | !help"
             )
         )
     except:
@@ -1605,8 +1428,8 @@ async def on_ready():
                 inline=False
             )
             embed.add_field(
-                name="💳 Info Saldo & 📊 Status Bot",
-                value="Cek saldo, statistik, dan status worker yang tersedia",
+                name="💳 Info Saldo",
+                value="Cek saldo dan statistik akun Anda",
                 inline=False
             )
             embed.add_field(
@@ -1636,8 +1459,10 @@ async def on_ready():
     # Setup Admin Channel
     try:
         for guild in bot.guilds:
+            # Cari atau buat category untuk admin
             admin_category = discord.utils.get(guild.categories, name="🛡️ Admin Control")
             if not admin_category:
+                # Create admin category
                 admin_role = discord.utils.get(guild.roles, name=config.ADMIN_ROLE_NAME)
                 
                 overwrites = {
@@ -1658,6 +1483,7 @@ async def on_ready():
                 )
                 print(f"✅ Created admin category in {guild.name}")
             
+            # Cari atau buat admin monitoring channel
             admin_channel = discord.utils.get(guild.text_channels, name="admin-dashboard")
             if not admin_channel:
                 admin_channel = await guild.create_text_channel(
@@ -1666,9 +1492,10 @@ async def on_ready():
                 )
                 print(f"✅ Created admin channel in {guild.name}")
             
+            # Send admin panel
             embed = discord.Embed(
                 title="🛡️ Admin Control Panel",
-                description="Selamat datang di dashboard admin. Gunakan tombol atau slash commands untuk monitoring.",
+                description="Selamat datang di dashboard admin. Gunakan tombol di bawah untuk monitoring dan management.",
                 color=0xe74c3c
             )
             
@@ -1691,16 +1518,8 @@ async def on_ready():
             )
             
             embed.add_field(
-                name="📝 Slash Commands",
-                value="`/admin addbalance @user [amount]` - Add balance\n"
-                      "`/admin checkuser @user` - Check user details\n"
-                      "`/admin botstats` - View bot statistics",
-                inline=False
-            )
-            
-            embed.add_field(
                 name="⚙️ Quick Info",
-                value=f"• Bot Version: 2.1 (Slash Commands)\n"
+                value=f"• Bot Version: 2.0\n"
                       f"• Max Workers: {config.MAX_LOGIN_WORKERS}\n"
                       f"• Admin Role: {config.ADMIN_ROLE_NAME}\n"
                       f"• Servers: {len(bot.guilds)}",
@@ -1717,6 +1536,18 @@ async def on_ready():
             
     except Exception as e:
         print(f"⚠️ Could not setup admin channel: {e}")
+        print(traceback.format_exc())
+
+# ==============================
+# Import Admin Commands (Optional)
+# ==============================
+try:
+    from admin_commands import setup_admin_commands
+    setup_admin_commands(bot)
+except ImportError:
+    print("ℹ️ Admin commands not loaded (admin_commands.py not found)")
+except Exception as e:
+    print(f"⚠️ Could not load admin commands: {e}")
 
 # ==============================
 # Run Bot
@@ -1732,7 +1563,6 @@ if __name__ == "__main__":
         config.print_config()
         
         print("\n🚀 Starting bot...")
-        print("💡 Menggunakan Slash Commands (/)")
         bot.run(config.DISCORD_TOKEN)
         
     except KeyboardInterrupt:

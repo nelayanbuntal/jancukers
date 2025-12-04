@@ -69,6 +69,19 @@ def init_database():
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
+        
+        # Migration: Add missing columns if they don't exist
+        try:
+            cursor.execute("SELECT total_spent FROM users LIMIT 1")
+        except sqlite3.OperationalError:
+            print("⚙️ Migrating database: Adding total_spent column...")
+            cursor.execute("ALTER TABLE users ADD COLUMN total_spent INTEGER NOT NULL DEFAULT 0")
+        
+        try:
+            cursor.execute("SELECT total_redeem FROM users LIMIT 1")
+        except sqlite3.OperationalError:
+            print("⚙️ Migrating database: Adding total_redeem column...")
+            cursor.execute("ALTER TABLE users ADD COLUMN total_redeem INTEGER NOT NULL DEFAULT 0")
 
         # Tabel topups
         cursor.execute('''
@@ -200,6 +213,7 @@ def deduct_balance(user_id: int, amount: int) -> bool:
                 UPDATE users
                 SET balance = balance - ?,
                     total_spent = total_spent + ?,
+                    total_redeem = total_redeem + 1,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE user_id = ? AND balance >= ?
             ''', (amount, amount, user_id, amount))
@@ -382,10 +396,10 @@ def get_user_stats(user_id: int):
         failed_count = cursor.fetchone()['count']
 
     return {
-        'balance': user['balance'],
-        'total_topup': user['total_topup'],
-        'total_spent': user['total_spent'],
-        'total_redeem': user['total_redeem'],
+        'balance': user.get('balance', 0),
+        'total_topup': user.get('total_topup', 0),
+        'total_spent': user.get('total_spent', 0),
+        'total_redeem': user.get('total_redeem', 0),
         'success_redeem': success_count,
         'failed_redeem': failed_count
     }
