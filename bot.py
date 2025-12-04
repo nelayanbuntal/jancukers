@@ -5,8 +5,9 @@ import asyncio
 import random
 import os
 from datetime import datetime
+from admin_commands import setup_admin_commands
 
-# Import modules kita
+# Import modules kita 
 from redeem_core import run_redeem_process
 import config
 from database import (
