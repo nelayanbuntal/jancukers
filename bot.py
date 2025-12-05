@@ -4,11 +4,12 @@ from discord import ui, Interaction, app_commands
 import asyncio
 import random
 import os
+import time
 from datetime import datetime
 import traceback
-import time
+
 # Import modules
-from redeem_core import run_redeem_process
+from redeem_core import run_redeem_process, load_codes
 import config
 from database import (
     init_database, get_balance, deduct_balance, 
@@ -104,15 +105,25 @@ async def login_worker(worker_id: int):
             region = task["region"]
             code_file = task["code_file"]
 
-            # Clean up old session files BEFORE starting
-            cleanup_old_session_files(user_id)
+            # Clean up old session files BEFORE starting (but keep current code file!)
+            cleanup_old_session_files(user_id, keep_current_code=True)
+            print(f"🧹 Cleaned old session files for user {user_id}")
             
             # Get new session files with timestamp
             session_files = get_session_files(user_id)
+            print(f"📁 Session files created: {session_files}")
             
             # Load codes for stats tracking
-            from redeem_core import load_codes
             codes = load_codes(code_file)
+            print(f"📦 Loaded {len(codes)} codes from {code_file}")
+            
+            if len(codes) == 0:
+                await safe_send(channel, "❌ **File kosong!**\n\nTidak ada kode yang ditemukan dalam file.")
+                channel_completion_time[channel.id] = config.get_wib_time().timestamp()
+                # Don't continue - let it go to finally for cleanup
+                login_queue.task_done()
+                worker_status[worker_id] = "idle"
+                continue
             
             # Initialize session stats
             session_stats[user_id] = {
@@ -120,6 +131,7 @@ async def login_worker(worker_id: int):
                 'invalid': 0,
                 'total': len(codes)
             }
+            print(f"📊 Session stats initialized: {session_stats[user_id]}")
 
             loop = asyncio.get_event_loop()
 
@@ -137,10 +149,14 @@ async def login_worker(worker_id: int):
 
             try:
                 # Jalankan redeem dengan timeout protection
+                print(f"🚀 Starting redeem process for user {user_id} with {len(codes)} codes")
+                
                 result = await asyncio.wait_for(
                     loop.run_in_executor(None, login_task),
                     timeout=1800  # 30 menit timeout
                 )
+                
+                print(f"✅ Redeem process completed. Result: {result}")
                 
                 # Kirim completion message with session files
                 await safe_send_completion(channel, user_id, result, session_files)
@@ -337,11 +353,22 @@ async def safe_send_completion(channel, user_id, result, session_files):
         await safe_send(channel, f"✅ Proses redeem selesai. Berhasil: {success_count}, Gagal: {failed_count}")
 
 # ==============================
-# Live Log Update (Single Message Edit)
+# Live Log Update (Single Message Edit with Throttling)
 # ==============================
+last_panel_update = {}  # channel_id -> timestamp
+
 async def update_live_panel(channel):
-    """Update live log panel dengan single message edit"""
+    """Update live log panel dengan single message edit + throttling"""
     try:
+        # AGGRESSIVE THROTTLING - Only update every 2 seconds
+        now = time.time()
+        last = last_panel_update.get(channel.id, 0)
+        
+        if now - last < 2.0:  # Skip if updated less than 2 seconds ago
+            return
+        
+        last_panel_update[channel.id] = now
+        
         # Get recent logs
         log_lines = live_logs.get(channel.id, [])
         recent_logs = log_lines[-10:] if log_lines else ["⏳ Memulai proses..."]
@@ -360,12 +387,14 @@ async def update_live_panel(channel):
             msg = await safe_send(channel, embed=embed)
             if msg:
                 live_status_message[channel.id] = msg
+                print(f"✅ Created initial status message for channel {channel.id}")
         else:
             # Edit existing message
             try:
                 await live_status_message[channel.id].edit(embed=embed)
             except discord.NotFound:
                 # Message deleted, create new one
+                print(f"⚠️ Status message deleted, creating new one for channel {channel.id}")
                 msg = await safe_send(channel, embed=embed)
                 if msg:
                     live_status_message[channel.id] = msg
@@ -401,16 +430,24 @@ def get_session_files(user_id):
         'timestamp': timestamp
     }
 
-def cleanup_old_session_files(user_id):
-    """Clean up old session files before starting new session"""
+def cleanup_old_session_files(user_id, keep_current_code=True):
+    """Clean up old session files before starting new session
+    
+    Args:
+        user_id: User ID
+        keep_current_code: If True, don't delete code_temp_{user_id}.txt (current upload)
+    """
     import glob
     patterns = [
-        f"code_temp_{user_id}.txt",
         f"success_{user_id}_*.txt",
         f"invalid_{user_id}_*.txt",
         f"success_{user_id}.txt",  # Legacy format
         f"invalid_{user_id}.txt"   # Legacy format
     ]
+    
+    # Only add code_temp to cleanup if explicitly requested
+    if not keep_current_code:
+        patterns.insert(0, f"code_temp_{user_id}.txt")
     
     cleaned = 0
     for pattern in patterns:
@@ -446,6 +483,124 @@ def cleanup_session_files(user_id, session_files=None):
     return cleaned
 
 # ==============================
+# Auto-Close Channel System
+# ==============================
+async def auto_close_channels():
+    """Background task to auto-close inactive channels"""
+    await bot.wait_until_ready()
+    
+    while not bot.is_stopped():
+        try:
+            now = config.get_wib_time().timestamp()
+            channels_to_close = []
+            
+            # Check all active channels
+            for user_id, channel_id in list(active_channels.items()):
+                channel = bot.get_channel(channel_id)
+                if not channel:
+                    # Channel already deleted
+                    active_channels.pop(user_id, None)
+                    continue
+                
+                # Check completion time
+                completion_time = channel_completion_time.get(channel_id)
+                if completion_time:
+                    elapsed = now - completion_time
+                    
+                    # Send warning 10 min before close
+                    if elapsed >= (config.AUTO_CLOSE_AFTER_COMPLETION - config.AUTO_CLOSE_WARNING_BEFORE):
+                        if not channel_close_warned.get(channel_id):
+                            await send_close_warning(channel)
+                            channel_close_warned[channel_id] = True
+                    
+                    # Close after 2 hours
+                    if elapsed >= config.AUTO_CLOSE_AFTER_COMPLETION:
+                        channels_to_close.append((user_id, channel))
+                        continue
+                
+                # Check inactivity time
+                last_activity = channel_last_activity.get(channel_id, now)
+                inactive_time = now - last_activity
+                
+                # Send warning 10 min before close
+                if inactive_time >= (config.AUTO_CLOSE_AFTER_INACTIVITY - config.AUTO_CLOSE_WARNING_BEFORE):
+                    if not channel_close_warned.get(channel_id):
+                        await send_close_warning(channel, reason="inactivity")
+                        channel_close_warned[channel_id] = True
+                
+                # Close after 2 hours inactivity
+                if inactive_time >= config.AUTO_CLOSE_AFTER_INACTIVITY:
+                    channels_to_close.append((user_id, channel))
+            
+            # Close channels
+            for user_id, channel in channels_to_close:
+                await close_channel_safely(user_id, channel)
+            
+            # Sleep for check interval
+            await asyncio.sleep(config.AUTO_CLOSE_CHECK_INTERVAL)
+            
+        except Exception as e:
+            print(f"❌ Error in auto-close task: {e}")
+            traceback.print_exc()
+            await asyncio.sleep(60)  # Wait 1 min on error
+
+async def send_close_warning(channel, reason="completion"):
+    """Send warning before closing channel"""
+    try:
+        if reason == "completion":
+            message = "Channel ini akan ditutup dalam **10 menit** setelah proses selesai."
+        else:
+            message = "Channel ini akan ditutup dalam **10 menit** karena tidak ada aktivitas."
+        
+        embed = discord.Embed(
+            title="⚠️ Peringatan Auto-Close",
+            description=message + "\n\n💡 Kirim pesan apa saja untuk membatalkan penutupan otomatis.",
+            color=0xf39c12
+        )
+        embed.set_footer(text=f"File log akan otomatis terhapus saat channel ditutup • {config.format_wib_time_only()}")
+        
+        await safe_send(channel, embed=embed)
+    except Exception as e:
+        print(f"⚠️ Error sending close warning: {e}")
+
+async def close_channel_safely(user_id, channel):
+    """Safely close channel and cleanup all resources"""
+    try:
+        print(f"🔒 Auto-closing channel: {channel.name} (user: {user_id})")
+        
+        # Cleanup session files (including code_temp)
+        cleanup_old_session_files(user_id, keep_current_code=False)
+        
+        # Cleanup memory
+        active_channels.pop(user_id, None)
+        user_data.pop(user_id, None)
+        session_stats.pop(user_id, None)
+        channel_last_activity.pop(channel.id, None)
+        channel_completion_time.pop(channel.id, None)
+        channel_close_warned.pop(channel.id, None)
+        live_logs.pop(channel.id, None)
+        live_status_message.pop(channel.id, None)
+        
+        # Send final message
+        final_embed = discord.Embed(
+            title="👋 Channel Ditutup",
+            description="Channel ini ditutup otomatis setelah period inaktivitas.\n\n"
+                       "Terima kasih telah menggunakan layanan kami!",
+            color=0x95a5a6
+        )
+        final_embed.set_footer(text=f"Ditutup pada {config.format_wib_datetime()}")
+        await safe_send(channel, embed=final_embed)
+        await asyncio.sleep(3)
+        
+        # Delete channel
+        await channel.delete(reason=f"Auto-close for user {user_id}")
+        print(f"✅ Channel closed successfully: {channel.name}")
+        
+    except Exception as e:
+        print(f"❌ Error closing channel: {e}")
+        traceback.print_exc()
+
+# ==============================
 # Bot Setup with Slash Commands
 # ==============================
 class MyBot(commands.Bot):
@@ -473,6 +628,10 @@ class MyBot(commands.Bot):
             self.add_view(PrivateChannelButtons())
             self.add_view(AdminControlPanel())
             print("✅ Persistent views added")
+            
+            # Start auto-close background task
+            asyncio.create_task(auto_close_channels())
+            print("✅ Auto-close task started")
             
             # Sync slash commands - FIXED: Force sync for all guilds
             try:
@@ -1510,6 +1669,13 @@ async def on_message(message: discord.Message):
     if message.author == bot.user:
         return
 
+    # Track activity for auto-close (reset inactivity timer)
+    if isinstance(message.channel, discord.TextChannel):
+        if message.channel.name.startswith("redeem-"):
+            channel_last_activity[message.channel.id] = config.get_wib_time().timestamp()
+            # Reset warning flag on activity
+            channel_close_warned.pop(message.channel.id, None)
+    
     if isinstance(message.channel, discord.TextChannel):
         if message.channel.name.startswith("redeem-") and len(message.attachments) > 0:
             user_info = user_data.get(message.author.id)

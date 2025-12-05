@@ -17,7 +17,7 @@ PUBLIC_CHANNEL_ID = int(os.getenv('PUBLIC_CHANNEL_ID', '1443997759479877683'))
 MIDTRANS_SERVER_KEY = os.getenv('MIDTRANS_SERVER_KEY', 'YOUR_MIDTRANS_SERVER_KEY')
 MIDTRANS_IS_PRODUCTION = os.getenv('MIDTRANS_IS_PRODUCTION', 'False').lower() == 'true'
 
-# Webhook config (untuk production, gunakan ngrok atau domain publik)
+# Webhook config
 WEBHOOK_URL = os.getenv('WEBHOOK_URL', 'http://localhost:8000/webhook/midtrans')
 WEBHOOK_PORT = int(os.getenv('WEBHOOK_PORT', '8000'))
 
@@ -25,39 +25,43 @@ WEBHOOK_PORT = int(os.getenv('WEBHOOK_PORT', '8000'))
 # REDEEM CONFIG
 # ==========================================
 MAX_LOGIN_WORKERS = int(os.getenv('MAX_LOGIN_WORKERS', '3'))
-REDEEM_COST_PER_CODE = int(os.getenv('REDEEM_COST_PER_CODE', '1000'))  # Biaya per kode dalam Rupiah
+REDEEM_COST_PER_CODE = int(os.getenv('REDEEM_COST_PER_CODE', '1000'))
 MIN_TOPUP_AMOUNT = int(os.getenv('MIN_TOPUP_AMOUNT', '1000'))
-MAX_CODES_PER_UPLOAD = int(os.getenv('MAX_CODES_PER_UPLOAD', '100'))  # Maksimal kode per upload
+MAX_CODES_PER_UPLOAD = int(os.getenv('MAX_CODES_PER_UPLOAD', '100'))
 
 # ==========================================
-# REDEEM CORE CONFIG (NEW - Production Grade)
+# REDEEM CORE CONFIG
 # ==========================================
 
 # Retry configuration
-MAX_LOGIN_RETRY = int(os.getenv('MAX_LOGIN_RETRY', '3'))  # Login retry attempts
-MAX_REDEEM_RETRY_PER_REGION = int(os.getenv('MAX_REDEEM_RETRY_PER_REGION', '2'))  # API retry per region
-MAX_SELENIUM_RETRY = int(os.getenv('MAX_SELENIUM_RETRY', '3'))  # Selenium element retry
+MAX_LOGIN_RETRY = int(os.getenv('MAX_LOGIN_RETRY', '3'))
+MAX_REDEEM_RETRY_PER_REGION = int(os.getenv('MAX_REDEEM_RETRY_PER_REGION', '2'))
+MAX_SELENIUM_RETRY = int(os.getenv('MAX_SELENIUM_RETRY', '3'))
+MAX_REGION_CYCLES = int(os.getenv('MAX_REGION_CYCLES', '10'))
 
 # Timeout configuration (in seconds)
-LOGIN_PAGE_TIMEOUT = int(os.getenv('LOGIN_PAGE_TIMEOUT', '30'))  # Page load timeout
-ELEMENT_WAIT_TIMEOUT = int(os.getenv('ELEMENT_WAIT_TIMEOUT', '15'))  # Element wait timeout
-API_REQUEST_TIMEOUT = int(os.getenv('API_REQUEST_TIMEOUT', '20'))  # API request timeout
-MAX_CODE_PROCESSING_TIME = int(os.getenv('MAX_CODE_PROCESSING_TIME', '300'))  # 5 minutes per code
-MAX_SESSION_TIME = int(os.getenv('MAX_SESSION_TIME', '1800'))  # 30 minutes total session
+LOGIN_PAGE_TIMEOUT = int(os.getenv('LOGIN_PAGE_TIMEOUT', '30'))
+ELEMENT_WAIT_TIMEOUT = int(os.getenv('ELEMENT_WAIT_TIMEOUT', '15'))
+API_REQUEST_TIMEOUT = int(os.getenv('API_REQUEST_TIMEOUT', '20'))
+MAX_CODE_PROCESSING_TIME = int(os.getenv('MAX_CODE_PROCESSING_TIME', '300'))
+MAX_SESSION_TIME = int(os.getenv('MAX_SESSION_TIME', '1800'))
 
 # Progress update interval (in seconds)
-PROGRESS_UPDATE_INTERVAL = int(os.getenv('PROGRESS_UPDATE_INTERVAL', '3'))  # Discord update frequency
+PROGRESS_UPDATE_INTERVAL = int(os.getenv('PROGRESS_UPDATE_INTERVAL', '3'))
+
+# Speed Mode
+SPEED_MODE = os.getenv('SPEED_MODE', 'True').lower() == 'true'
 
 # Security settings
 ENABLE_SENSITIVE_DATA_MASKING = os.getenv('ENABLE_SENSITIVE_DATA_MASKING', 'True').lower() == 'true'
-MASK_SHOW_CHARACTERS = int(os.getenv('MASK_SHOW_CHARACTERS', '4'))  # Show first/last N characters
+MASK_SHOW_CHARACTERS = int(os.getenv('MASK_SHOW_CHARACTERS', '4'))
 
 # Feature flags
 ENABLE_CANCELLATION = os.getenv('ENABLE_CANCELLATION', 'True').lower() == 'true'
 ENABLE_AUTO_RETRY = os.getenv('ENABLE_AUTO_RETRY', 'True').lower() == 'true'
 ENABLE_PROGRESS_TRACKING = os.getenv('ENABLE_PROGRESS_TRACKING', 'True').lower() == 'true'
 
-# Region configuration (NEW - Updated list)
+# Region configuration
 SUPPORTED_REGIONS = {
     'hk2': {'idc_code': 'HKXC_IDC_01', 'name': 'Hong Kong 2'},
     'hk': {'idc_code': 'HK_IDC_01', 'name': 'Hong Kong'},
@@ -67,7 +71,7 @@ SUPPORTED_REGIONS = {
     'us': {'idc_code': 'US_IDC_01', 'name': 'United States'}
 }
 
-# Android version configuration (NEW - Updated format)
+# Android version configuration
 SUPPORTED_ANDROID_VERSIONS = {
     '10.0': 'Android 10',
     '15.0': 'Android 15',
@@ -75,7 +79,7 @@ SUPPORTED_ANDROID_VERSIONS = {
     '12.0': 'Android 12'
 }
 
-# Android number mapping (NEW - v2.1 for easier input)
+# Android number mapping
 ANDROID_NUMBER_MAP = {
     '1': '8.1',
     '2': '10.0',
@@ -83,7 +87,7 @@ ANDROID_NUMBER_MAP = {
     '4': '15.0'
 }
 
-# Region select options with emojis (NEW - v2.1 for dropdown)
+# Region select options with emojis
 REGION_SELECT_OPTIONS = [
     {'value': 'hk2', 'label': 'Hong Kong 2', 'emoji': '🇭🇰', 'description': 'HKXC_IDC_01'},
     {'value': 'hk', 'label': 'Hong Kong', 'emoji': '🇭🇰', 'description': 'HK_IDC_01'},
@@ -93,7 +97,7 @@ REGION_SELECT_OPTIONS = [
     {'value': 'us', 'label': 'United States', 'emoji': '🇺🇸', 'description': 'US_IDC_01'}
 ]
 
-# Default region and android (for testing)
+# Default region and android
 DEFAULT_REGION = os.getenv('DEFAULT_REGION', 'hk sg tw')
 DEFAULT_ANDROID_VERSION = os.getenv('DEFAULT_ANDROID_VERSION', '10.0')
 
@@ -102,7 +106,6 @@ DEFAULT_ANDROID_VERSION = os.getenv('DEFAULT_ANDROID_VERSION', '10.0')
 # ==========================================
 from datetime import timezone, timedelta
 
-# WIB = UTC+7 (Western Indonesia Time)
 WIB = timezone(timedelta(hours=7))
 
 def get_wib_time():
@@ -131,43 +134,47 @@ def format_wib_time_only(dt=None):
 # ==========================================
 # AUTO-CLOSE CHANNEL CONFIGURATION
 # ==========================================
-AUTO_CLOSE_AFTER_COMPLETION = int(os.getenv('AUTO_CLOSE_AFTER_COMPLETION', '7200'))  # 2 hours in seconds
-AUTO_CLOSE_AFTER_INACTIVITY = int(os.getenv('AUTO_CLOSE_AFTER_INACTIVITY', '7200'))  # 2 hours in seconds
-AUTO_CLOSE_WARNING_BEFORE = int(os.getenv('AUTO_CLOSE_WARNING_BEFORE', '600'))  # 10 minutes before
-AUTO_CLOSE_CHECK_INTERVAL = int(os.getenv('AUTO_CLOSE_CHECK_INTERVAL', '300'))  # Check every 5 minutes
+AUTO_CLOSE_AFTER_COMPLETION = int(os.getenv('AUTO_CLOSE_AFTER_COMPLETION', '7200'))
+AUTO_CLOSE_AFTER_INACTIVITY = int(os.getenv('AUTO_CLOSE_AFTER_INACTIVITY', '7200'))
+AUTO_CLOSE_WARNING_BEFORE = int(os.getenv('AUTO_CLOSE_WARNING_BEFORE', '600'))
+AUTO_CLOSE_CHECK_INTERVAL = int(os.getenv('AUTO_CLOSE_CHECK_INTERVAL', '300'))
 
 # ==========================================
 # DATABASE CONFIG
 # ==========================================
 DB_FILE = os.getenv('DB_FILE', 'bot_database.db')
 
-# Database retry configuration (for thread-safety)
+# Database retry configuration
 DB_MAX_RETRY_ATTEMPTS = int(os.getenv('DB_MAX_RETRY_ATTEMPTS', '5'))
-DB_RETRY_DELAY = float(os.getenv('DB_RETRY_DELAY', '0.1'))  # seconds
-DB_TIMEOUT = int(os.getenv('DB_TIMEOUT', '30'))  # seconds
+DB_RETRY_DELAY = float(os.getenv('DB_RETRY_DELAY', '0.1'))
+DB_TIMEOUT = int(os.getenv('DB_TIMEOUT', '30'))
 
 # ==========================================
-# CLOUDEMULATOR CONFIG (SECRET KEY)
+# LOGGING CONFIG (NEW - ENHANCED)
+# ==========================================
+LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO')  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+LOG_TO_FILE = os.getenv('LOG_TO_FILE', 'True').lower() == 'true'  # Changed default to True
+LOG_FILE = os.getenv('LOG_FILE', 'bot.log')
+LOG_MAX_SIZE = int(os.getenv('LOG_MAX_SIZE', '10485760'))  # 10MB
+
+# Log rotation settings
+LOG_BACKUP_COUNT = int(os.getenv('LOG_BACKUP_COUNT', '5'))  # Keep 5 old log files
+
+# Log format
+LOG_FORMAT = os.getenv('LOG_FORMAT', '%(asctime)s | %(levelname)-8s | %(message)s')
+LOG_DATE_FORMAT = os.getenv('LOG_DATE_FORMAT', '%Y-%m-%d %H:%M:%S')
+
+# ==========================================
+# CLOUDEMULATOR CONFIG
 # ==========================================
 CLOUDEMULATOR_SECRET_KEY = "2018red8688RendfingerSxxd"
 
 # ==========================================
-# LOGGING CONFIG (NEW)
-# ==========================================
-LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO')  # DEBUG, INFO, WARNING, ERROR
-LOG_TO_FILE = os.getenv('LOG_TO_FILE', 'False').lower() == 'true'
-LOG_FILE = os.getenv('LOG_FILE', 'bot.log')
-LOG_MAX_SIZE = int(os.getenv('LOG_MAX_SIZE', '10485760'))  # 10MB
-
-# ==========================================
-# HELPER FUNCTIONS
+# VALIDATION & HELPER FUNCTIONS
 # ==========================================
 
 def validate_config():
-    """
-    Validasi konfigurasi penting
-    Dipanggil saat bot startup
-    """
+    """Validasi konfigurasi penting"""
     errors = []
     warnings = []
 
@@ -194,23 +201,27 @@ def validate_config():
     if MIN_TOPUP_AMOUNT < 1000:
         warnings.append("⚠️ MIN_TOPUP_AMOUNT minimal 1000")
 
-    # Check Retry Configuration (NEW)
+    # Check Retry Configuration
     if MAX_LOGIN_RETRY < 1 or MAX_LOGIN_RETRY > 10:
         warnings.append("⚠️ MAX_LOGIN_RETRY sebaiknya antara 1-10")
     
     if MAX_REDEEM_RETRY_PER_REGION < 1 or MAX_REDEEM_RETRY_PER_REGION > 5:
         warnings.append("⚠️ MAX_REDEEM_RETRY_PER_REGION sebaiknya antara 1-5")
 
-    # Check Timeouts (NEW)
+    # Check Timeouts
     if LOGIN_PAGE_TIMEOUT < 10 or LOGIN_PAGE_TIMEOUT > 120:
         warnings.append("⚠️ LOGIN_PAGE_TIMEOUT sebaiknya antara 10-120 detik")
     
     if MAX_SESSION_TIME < 600 or MAX_SESSION_TIME > 7200:
         warnings.append("⚠️ MAX_SESSION_TIME sebaiknya antara 10-120 menit")
 
-    # Check Database Config (NEW)
+    # Check Database Config
     if DB_TIMEOUT < 10:
         warnings.append("⚠️ DB_TIMEOUT sebaiknya minimal 10 detik")
+
+    # Check Logging Config
+    if LOG_LEVEL not in ['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL']:
+        warnings.append(f"⚠️ LOG_LEVEL tidak valid: {LOG_LEVEL}, default ke INFO")
 
     # Print errors and warnings
     if errors or warnings:
@@ -226,7 +237,6 @@ def validate_config():
         
         print("="*50 + "\n")
 
-        # Critical errors yang harus diperbaiki
         if any("❌" in e for e in errors):
             print("🛑 Bot tidak bisa jalan! Perbaiki .env terlebih dahulu.\n")
             return False
@@ -234,9 +244,9 @@ def validate_config():
     return True
 
 def print_config():
-    """Print konfigurasi saat startup (untuk debugging)"""
+    """Print konfigurasi saat startup"""
     print("\n" + "="*50)
-    print("⚙️ KONFIGURASI BOT v2.0")
+    print("⚙️ KONFIGURASI BOT v2.3 (PRODUCTION)")
     print("="*50)
     
     # Discord Config
@@ -257,47 +267,49 @@ def print_config():
     print(f"  Cost per Code: Rp {REDEEM_COST_PER_CODE:,}")
     print(f"  Min Topup: Rp {MIN_TOPUP_AMOUNT:,}")
     print(f"  Max Codes Upload: {MAX_CODES_PER_UPLOAD}")
+    print(f"  Speed Mode: {'✅ Enabled' if SPEED_MODE else '❌ Disabled'}")
     
-    # Retry Config (NEW)
-    print(f"\n🔄 RETRY CONFIGURATION:")
-    print(f"  Login Retry: {MAX_LOGIN_RETRY} attempts")
-    print(f"  API Retry per Region: {MAX_REDEEM_RETRY_PER_REGION} attempts")
-    print(f"  Selenium Retry: {MAX_SELENIUM_RETRY} attempts")
+    # Retry Config
+    print(f"\n🔄 RETRY:")
+    print(f"  Login: {MAX_LOGIN_RETRY} attempts")
+    print(f"  API per Region: {MAX_REDEEM_RETRY_PER_REGION} attempts")
+    print(f"  Selenium: {MAX_SELENIUM_RETRY} attempts")
     
-    # Timeout Config (NEW)
+    # Timeout Config
     print(f"\n⏱️ TIMEOUTS:")
     print(f"  Login Page: {LOGIN_PAGE_TIMEOUT}s")
     print(f"  Element Wait: {ELEMENT_WAIT_TIMEOUT}s")
     print(f"  API Request: {API_REQUEST_TIMEOUT}s")
-    print(f"  Max Code Time: {MAX_CODE_PROCESSING_TIME}s")
-    print(f"  Max Session: {MAX_SESSION_TIME}s")
     
-    # Regions (NEW)
-    print(f"\n🌍 SUPPORTED REGIONS ({len(SUPPORTED_REGIONS)}):")
+    # Regions
+    print(f"\n🌍 REGIONS ({len(SUPPORTED_REGIONS)}):")
     for key, info in SUPPORTED_REGIONS.items():
         print(f"  {key.upper()}: {info['name']}")
     
-    # Android Versions (NEW)
-    print(f"\n📱 ANDROID VERSIONS ({len(SUPPORTED_ANDROID_VERSIONS)}):")
+    # Android Versions
+    print(f"\n📱 ANDROID ({len(SUPPORTED_ANDROID_VERSIONS)}):")
     for version, name in SUPPORTED_ANDROID_VERSIONS.items():
         print(f"  {version}: {name}")
     
-    # Security (NEW)
+    # Security
     print(f"\n🔒 SECURITY:")
     print(f"  Data Masking: {'✅ Enabled' if ENABLE_SENSITIVE_DATA_MASKING else '❌ Disabled'}")
     print(f"  Mask Characters: {MASK_SHOW_CHARACTERS}")
-    
-    # Features (NEW)
-    print(f"\n✨ FEATURES:")
-    print(f"  Cancellation: {'✅ Enabled' if ENABLE_CANCELLATION else '❌ Disabled'}")
-    print(f"  Auto Retry: {'✅ Enabled' if ENABLE_AUTO_RETRY else '❌ Disabled'}")
-    print(f"  Progress Tracking: {'✅ Enabled' if ENABLE_PROGRESS_TRACKING else '❌ Disabled'}")
     
     # Database
     print(f"\n💾 DATABASE:")
     print(f"  File: {DB_FILE}")
     print(f"  Timeout: {DB_TIMEOUT}s")
     print(f"  Max Retry: {DB_MAX_RETRY_ATTEMPTS}")
+    
+    # Logging (NEW)
+    print(f"\n📝 LOGGING:")
+    print(f"  Level: {LOG_LEVEL}")
+    print(f"  To File: {'✅ Enabled' if LOG_TO_FILE else '❌ Disabled'}")
+    if LOG_TO_FILE:
+        print(f"  File: logs/{LOG_FILE}")
+        print(f"  Max Size: {LOG_MAX_SIZE / 1024 / 1024:.1f}MB")
+        print(f"  Backups: {LOG_BACKUP_COUNT}")
     
     print("="*50 + "\n")
 
@@ -310,11 +322,11 @@ def get_android_name(version):
     return SUPPORTED_ANDROID_VERSIONS.get(version)
 
 def get_android_version_from_number(number):
-    """Convert number input to android version (NEW - v2.1)"""
+    """Convert number input to android version"""
     return ANDROID_NUMBER_MAP.get(str(number))
 
 def is_valid_android_number(number):
-    """Check if android number is valid (NEW - v2.1)"""
+    """Check if android number is valid"""
     return str(number) in ANDROID_NUMBER_MAP
 
 def is_valid_region(region_code):
@@ -334,5 +346,5 @@ def get_all_android_versions():
     return list(SUPPORTED_ANDROID_VERSIONS.keys())
 
 def get_android_display_options():
-    """Get formatted android options for display (NEW - v2.1)"""
+    """Get formatted android options for display"""
     return " | ".join([f"{num}={ver}" for num, ver in ANDROID_NUMBER_MAP.items()])

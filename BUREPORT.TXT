@@ -1,24 +1,23 @@
-Task exception was never retrieved
-future: <Task finished name='Task-4' coro=<login_worker() done, defined at /workspaces/242656431/project/bot.py:53> exception=HTTPException('400 Bad Request (error code: 50035): Invalid Form Body\nIn content: Must be 4000 or fewer in length.')>
+```
+❌ Worker 0 error: run_redeem_process() got an unexpected keyword argument 'session_files'
 Traceback (most recent call last):
-  File "/workspaces/242656431/project/bot.py", line 80, in login_worker
-    await channel.send(f"✅ Redeem selesai:\n```\n{result}\n```")
-  File "/home/ubuntu/.local/lib/python3.13/site-packages/discord/abc.py", line 1703, in send
-    data = await state.http.send_message(channel.id, params=params)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/home/ubuntu/.local/lib/python3.13/site-packages/discord/http.py", line 773, in request
-    raise HTTPException(response, data)
-discord.errors.HTTPException: 400 Bad Request (error code: 50035): Invalid Form Body
-In content: Must be 4000 or fewer in length.
-Task exception was never retrieved
-future: <Task finished name='Task-5' coro=<login_worker() done, defined at /workspaces/242656431/project/bot.py:53> exception=HTTPException('400 Bad Request (error code: 50035): Invalid Form Body\nIn content: Must be 4000 or fewer in length.')>
-Traceback (most recent call last):
-  File "/workspaces/242656431/project/bot.py", line 80, in login_worker
-    await channel.send(f"✅ Redeem selesai:\n```\n{result}\n```")
-  File "/home/ubuntu/.local/lib/python3.13/site-packages/discord/abc.py", line 1703, in send
-    data = await state.http.send_message(channel.id, params=params)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/home/ubuntu/.local/lib/python3.13/site-packages/discord/http.py", line 773, in request
-    raise HTTPException(response, data)
-discord.errors.HTTPException: 400 Bad Request (error code: 50035): Invalid Form Body
-In content: Must be 4000 or fewer in length.
+  File "/workspaces/jancukers/./bot.py", line 140, in login_worker
+    result = await asyncio.wait_for(
+             ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/python/3.12.1/lib/python3.12/asyncio/tasks.py", line 520, in wait_for
+    return await fut
+           ^^^^^^^^^
+  File "/usr/local/python/3.12.1/lib/python3.12/concurrent/futures/thread.py", line 58, in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspaces/jancukers/./bot.py", line 127, in login_task
+    return run_redeem_process(
+           ^^^^^^^^^^^^^^^^^^^
+TypeError: run_redeem_process() got an unexpected keyword argument 'session_files'
+```
+
+
+
+```
+
+terdapat error tersebut, apakah munkin karena redeem_core.py belum terintegrasi dengan bot.py ?
