@@ -2,3 +2,29 @@
 2025-12-05 20:05:14 | [31mERROR[0m | [User:1384584067319730226] Error in get_user_stats: no such column: success_count
 2025-12-05 20:08:41 | [32mINFO[0m | ✅ Database initialized successfully
 2025-12-05 20:09:00 | [31mERROR[0m | [User:1384584067319730226] Error in get_user_stats: no such column: success_count
+2025-12-05 20:43:08 | [32mINFO[0m | ✅ Supabase client initialized
+2025-12-05 20:43:09 | [32mINFO[0m | ✅ Supabase database initialized and connected
+2025-12-05 20:43:23 | [31mERROR[0m | [User:1384584067319730226] Error in get_balance: {'message': 'new row violates row-level security policy for table "users"', 'code': '42501', 'hint': None, 'details': None}
+2025-12-05 20:44:03 | [31mERROR[0m | [User:1384584067319730226] Error in get_balance: {'message': 'new row violates row-level security policy for table "users"', 'code': '42501', 'hint': None, 'details': None}
+2025-12-05 20:44:03 | [31mERROR[0m | [User:1384584067319730226] Error in create_topup: {'message': 'new row violates row-level security policy for table "topups"', 'code': '42501', 'hint': None, 'details': None}
+2025-12-05 20:53:07 | [32mINFO[0m | ✅ Supabase client initialized
+2025-12-05 20:53:07 | [32mINFO[0m | ✅ Supabase connection tested successfully
+2025-12-05 20:53:07 | [32mINFO[0m | ✅ Supabase database initialized and connected
+2025-12-05 20:53:50 | [32mINFO[0m | [User:1384584067319730226] Created new user: 1384584067319730226
+2025-12-05 20:54:18 | [32mINFO[0m | [User:1384584067319730226] Created topup: TOPUP-1384584067319730226-20251205205417 | Rp 1,000
+2025-12-05 20:57:55 | [32mINFO[0m | Updated topup status: TOPUP-1384584067319730226-20251205205417 → success
+2025-12-05 20:57:55 | [32mINFO[0m | [User:1384584067319730226] Added Rp 1,000 to user. New balance: Rp 1,000
+2025-12-05 21:00:30 | [32mINFO[0m | [User:1384584067319730226] Deducted Rp 1,000. New balance: Rp 0
+2025-12-05 21:00:30 | [32mINFO[0m | [User:1384584067319730226] === Starting redeem process ===
+2025-12-05 21:00:30 | [32mINFO[0m | [User:1384584067319730226] Loaded 1 codes
+2025-12-05 21:00:30 | [32mINFO[0m | [User:1384584067319730226] Regions: Singapore
+2025-12-05 21:00:30 | [32mINFO[0m | [User:1384584067319730226] Android: 12.0
+2025-12-05 21:00:30 | [32mINFO[0m | [User:1384584067319730226] Login attempt for: buk****com
+2025-12-05 21:01:19 | [32mINFO[0m | [User:1384584067319730226] Login: buk****@gmail.com | Success: True
+2025-12-05 21:01:19 | [32mINFO[0m | [User:1384584067319730226] Login successful for: buk****com
+2025-12-05 21:01:19 | [32mINFO[0m | [User:1384584067319730226] Login successful
+2025-12-05 21:01:19 | [32mINFO[0m | [User:1384584067319730226] Starting to process 1 codes
+2025-12-05 21:01:19 | [32mINFO[0m | [User:1384584067319730226] API Call: https://twplay.redfinger.com/osfingerauth/activation/checkActivationCode.json | Status: 200 | Time: 0.30s
+2025-12-05 21:01:19 | [33mWARNING[0m | [User:1384584067319730226] Redeem: FDFW****FSD4 | Region: Singapore | Attempt: 1 | Result: invalid
+2025-12-05 21:01:19 | [33mWARNING[0m | [User:1384584067319730226] INVALID: Kode FDFW-****-FSD4 → SG : kode tidak valid
+2025-12-05 21:01:19 | [32mINFO[0m | [User:1384584067319730226] === Redeem completed: Success=0, Failed=1 ===

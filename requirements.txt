@@ -4,8 +4,8 @@ discord.py>=2.3.2
 # Web Framework untuk Webhook
 Flask>=3.0.0
 
-# Database (jika ingin upgrade ke PostgreSQL)
-# psycopg2-binary>=2.9.9
+# Supabase Client (NEW - Required)
+supabase>=2.0.0
 
 # HTTP Requests
 requests>=2.31.0
@@ -19,3 +19,6 @@ undetected-chromedriver>=3.5.4
 
 # Utilities
 asyncio
+
+# Optional: Keep for migration from SQLite
+# psycopg2-binary>=2.9.9  # If you need direct PostgreSQL access

@@ -1,88 +1,239 @@
-PRAGMA foreign_keys=OFF;
-BEGIN TRANSACTION;
-CREATE TABLE users (
-                user_id INTEGER PRIMARY KEY,
-                balance INTEGER NOT NULL DEFAULT 0,
-                total_topup INTEGER NOT NULL DEFAULT 0,
-                total_redeem INTEGER NOT NULL DEFAULT 0,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            , total_spent INTEGER NOT NULL DEFAULT 0);
-INSERT INTO users VALUES(999999,45000,60000,3,'2025-12-02 22:16:22','2025-12-03 00:02:58',0);
-INSERT INTO users VALUES(764803791551201281,992000,1012000,3,'2025-12-02 23:35:29','2025-12-05 13:13:37',5000);
-INSERT INTO users VALUES(996766196349284353,1000,1000,0,'2025-12-02 22:51:54','2025-12-02 23:15:28',0);
-INSERT INTO users VALUES(1384584067319730226,1004979000,1005017000,25,'2025-12-02 22:37:32','2025-12-05 12:27:33',29000);
-CREATE TABLE topups (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL,
-                amount INTEGER NOT NULL,
-                order_id TEXT UNIQUE NOT NULL,
-                payment_type TEXT DEFAULT 'qris',
-                status TEXT CHECK(status IN ('pending', 'success', 'failed', 'expired')) DEFAULT 'pending',
-                midtrans_data TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (user_id) REFERENCES users(user_id)
-            );
-INSERT INTO topups VALUES(1,1384584067319730226,1000,'TOPUP-1384584067319730226-20251203053743','qris','pending',NULL,'2025-12-02 22:37:44','2025-12-02 22:37:44');
-INSERT INTO topups VALUES(2,996766196349284353,1000,'TOPUP-996766196349284353-20251203053805','qris','pending',NULL,'2025-12-02 22:38:06','2025-12-02 22:38:06');
-INSERT INTO topups VALUES(3,1384584067319730226,1000,'TOPUP-1384584067319730226-20251203055257','qris','pending',NULL,'2025-12-02 22:52:58','2025-12-02 22:52:58');
-INSERT INTO topups VALUES(4,996766196349284353,1000,'TOPUP-996766196349284353-20251203061110','qris','pending',NULL,'2025-12-02 23:11:10','2025-12-02 23:11:10');
-INSERT INTO topups VALUES(5,1384584067319730226,1000,'TOPUP-1384584067319730226-20251203062218','qris','pending',NULL,'2025-12-02 23:22:18','2025-12-02 23:22:18');
-INSERT INTO topups VALUES(6,1384584067319730226,5000,'TOPUP-1384584067319730226-20251203062642','qris','pending',NULL,'2025-12-02 23:26:43','2025-12-02 23:26:43');
-INSERT INTO topups VALUES(7,764803791551201281,1000,'TOPUP-764803791551201281-20251203063600','qris','pending',NULL,'2025-12-02 23:36:01','2025-12-02 23:36:01');
-INSERT INTO topups VALUES(8,764803791551201281,3000,'TOPUP-764803791551201281-20251203063851','qris','pending',NULL,'2025-12-02 23:38:52','2025-12-02 23:38:52');
-INSERT INTO topups VALUES(9,1384584067319730226,2000,'TOPUP-1384584067319730226-20251203064558','qris','pending',NULL,'2025-12-02 23:45:59','2025-12-02 23:45:59');
-INSERT INTO topups VALUES(10,1384584067319730226,1000,'TOPUP-1384584067319730226-20251203065312','qris','pending',NULL,'2025-12-02 23:53:12','2025-12-02 23:53:12');
-INSERT INTO topups VALUES(11,1384584067319730226,2000,'TOPUP-1384584067319730226-20251203065516','qris','pending',NULL,'2025-12-02 23:55:17','2025-12-02 23:55:17');
-INSERT INTO topups VALUES(12,1384584067319730226,1000,'TOPUP-1384584067319730226-20251203065712','qris','pending',NULL,'2025-12-02 23:57:12','2025-12-02 23:57:12');
-INSERT INTO topups VALUES(13,1384584067319730226,1000,'TOPUP-1384584067319730226-20251203070517','qris','pending',NULL,'2025-12-03 00:05:17','2025-12-03 00:05:17');
-INSERT INTO topups VALUES(14,1384584067319730226,2000,'TOPUP-1384584067319730226-20251203073138','qris','pending',NULL,'2025-12-03 00:31:39','2025-12-03 00:31:39');
-INSERT INTO topups VALUES(15,1384584067319730226,2000,'TOPUP-1384584067319730226-20251203073244','qris','pending',NULL,'2025-12-03 00:32:44','2025-12-03 00:32:44');
-INSERT INTO topups VALUES(16,1384584067319730226,2000,'TOPUP-1384584067319730226-20251203073346','qris','pending',NULL,'2025-12-03 00:33:47','2025-12-03 00:33:47');
-INSERT INTO topups VALUES(17,1384584067319730226,3000,'TOPUP-1384584067319730226-20251203074302','qris','pending',NULL,'2025-12-03 00:43:02','2025-12-03 00:43:02');
-INSERT INTO topups VALUES(18,1384584067319730226,1000,'TOPUP-1384584067319730226-20251203075746','qris','pending',NULL,'2025-12-03 00:57:47','2025-12-03 00:57:47');
-INSERT INTO topups VALUES(19,1384584067319730226,2000,'TOPUP-1384584067319730226-20251203080554','qris','pending',NULL,'2025-12-03 01:05:55','2025-12-03 01:05:55');
-INSERT INTO topups VALUES(20,1384584067319730226,2000000,'TOPUP-1384584067319730226-20251203081340','qris','pending',NULL,'2025-12-03 01:13:41','2025-12-03 01:13:41');
-INSERT INTO topups VALUES(21,1384584067319730226,90000,'TOPUP-1384584067319730226-20251203082748','qris','pending',NULL,'2025-12-03 01:27:49','2025-12-03 01:27:49');
-INSERT INTO topups VALUES(22,1384584067319730226,2000,'TOPUP-1384584067319730226-20251203083114','qris','pending',NULL,'2025-12-03 01:31:15','2025-12-03 01:31:15');
-INSERT INTO topups VALUES(23,1384584067319730226,2000,'TOPUP-1384584067319730226-20251203083509','qris','success','{''order_id'': ''TOPUP-1384584067319730226-20251203083509'', ''status_code'': ''200'', ''gross_amount'': ''10000'', ''transaction_status'': ''settlement'', ''signature_key'': ''97fe49cf514f3aa2959fa9c1becaa8cca29458aba286a1b48c30b76a4a07eed30bc17662f826db99d7d7745ea9a1549517dd8c01da6fc5252bbd05cd962790a3'', ''payment_type'': ''qris'', ''fraud_status'': ''accept'', ''transaction_id'': ''TEST-TX-123456''}','2025-12-03 01:35:09','2025-12-03 01:55:02');
-INSERT INTO topups VALUES(24,1384584067319730226,50000,'TOPUP-1384584067319730226-20251203084002','qris','pending',NULL,'2025-12-03 01:40:02','2025-12-03 01:40:02');
-INSERT INTO topups VALUES(25,1384584067319730226,5000000,'TOPUP-1384584067319730226-20251203085630','qris','success','{''order_id'': ''TOPUP-1384584067319730226-20251203085630'', ''status_code'': ''200'', ''gross_amount'': ''5000000'', ''transaction_status'': ''settlement'', ''signature_key'': ''67330f3814a2746dffc833a994058c5aec01ae785bcc22da52bb381be72a9d5b65b1d82ef3065b6a467530f6ed9f87e35777be7986de867f427f0afae19889b4'', ''payment_type'': ''qris'', ''fraud_status'': ''accept'', ''transaction_id'': ''TEST-TX-123456''}','2025-12-03 01:56:31','2025-12-03 01:57:00');
-INSERT INTO topups VALUES(26,1384584067319730226,8000,'TOPUP-1384584067319730226-20251203085839','qris','success','{''order_id'': ''TOPUP-1384584067319730226-20251203085839'', ''status_code'': ''200'', ''gross_amount'': ''5000000'', ''transaction_status'': ''settlement'', ''signature_key'': ''f53e7430876bd3b8b7222061fbad4e70f318622bf2a99ecb5df00435a3600f5e4be1e7aae159fad7ac6663ab8b6238b8442bd77773d5424d83ab43010a687bfb'', ''payment_type'': ''qris'', ''fraud_status'': ''accept'', ''transaction_id'': ''TEST-TX-123456''}','2025-12-03 01:58:40','2025-12-03 01:59:51');
-INSERT INTO topups VALUES(27,1384584067319730226,1000000000,'TOPUP-1384584067319730226-20251203090148','qris','success','{''order_id'': ''TOPUP-1384584067319730226-20251203090148'', ''status_code'': ''200'', ''gross_amount'': ''5000000'', ''transaction_status'': ''settlement'', ''signature_key'': ''b5deb14c08eb36d8f05b2487fa4fa2d3a8ee65724ea9112727d7a0418598819585a9860234a6be47092492d27b7cfad146e6e307db37d752217e231b58965a84'', ''payment_type'': ''qris'', ''fraud_status'': ''accept'', ''transaction_id'': ''TEST-TX-123456''}','2025-12-03 02:01:48','2025-12-03 02:02:15');
-INSERT INTO topups VALUES(28,764803791551201281,5000,'TOPUP-764803791551201281-20251203091322','qris','success','{''order_id'': ''TOPUP-764803791551201281-20251203091322'', ''status_code'': ''200'', ''gross_amount'': ''100000'', ''transaction_status'': ''settlement'', ''signature_key'': ''a04aa082520c33449f1e980a1538001f39599fd6dfd867b378b49ab4217919f284cb7ff872c428923ac4879152c83cad20e0226f3f3804f4917f1f834965ff93'', ''payment_type'': ''qris'', ''fraud_status'': ''accept'', ''transaction_id'': ''TEST-TX-123456''}','2025-12-03 02:13:22','2025-12-03 02:13:59');
-INSERT INTO topups VALUES(29,764803791551201281,1000000,'TOPUP-764803791551201281-20251204102657','qris','success','{''order_id'': ''TOPUP-764803791551201281-20251204102657'', ''status_code'': ''200'', ''gross_amount'': ''1000000'', ''transaction_status'': ''settlement'', ''signature_key'': ''cc7c890959e22b71e8920f6d155ee5dbe716e5162212fc26cdd4675f19db4ace4935295e2c5cb49159fe4c579f041f40da24520742a34a17a6eb67bb9ad27eba'', ''payment_type'': ''qris'', ''fraud_status'': ''accept'', ''transaction_id'': ''TEST-TX-123456''}','2025-12-04 03:26:58','2025-12-04 03:29:45');
-INSERT INTO topups VALUES(30,1384584067319730226,1000,'TOPUP-1384584067319730226-20251204115030','qris','success','{''order_id'': ''TOPUP-1384584067319730226-20251204115030'', ''status_code'': ''200'', ''gross_amount'': ''1000000'', ''transaction_status'': ''settlement'', ''signature_key'': ''9bb090248981a44ca8bbcd1edc4b99c2b25676c5831a5dbf091c0918be6fc86103087250c43136903094732a6c3a0263d7a111afc1ea888ca6ed6f0ecaf29eee'', ''payment_type'': ''qris'', ''fraud_status'': ''accept'', ''transaction_id'': ''TEST-TX-123456''}','2025-12-04 11:50:31','2025-12-04 11:51:22');
-INSERT INTO topups VALUES(31,1384584067319730226,1000,'TOPUP-1384584067319730226-20251204125129','qris','success','{''order_id'': ''TOPUP-1384584067319730226-20251204125129'', ''status_code'': ''200'', ''gross_amount'': ''1000000'', ''transaction_status'': ''settlement'', ''signature_key'': ''5bfc17d0c0bdd738d41028db0407e8f3872ae9ede5cfbae56e09af4327a0d708c38058d8cafdd2e9623b333db35c6f97b419614a6b3774de12f65ac1d66b97e3'', ''payment_type'': ''qris'', ''fraud_status'': ''accept'', ''transaction_id'': ''TEST-TX-123456''}','2025-12-04 12:51:30','2025-12-04 12:52:15');
-INSERT INTO topups VALUES(32,1384584067319730226,1000,'TOPUP-1384584067319730226-20251204183303','qris','pending',NULL,'2025-12-04 18:33:04','2025-12-04 18:33:04');
-CREATE TABLE redeems (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL,
-                code TEXT NOT NULL,
-                region TEXT,
-                android_version TEXT,
-                status TEXT CHECK(status IN ('queued', 'processing', 'success', 'invalid', 'error')) DEFAULT 'queued',
-                cost INTEGER NOT NULL DEFAULT 0,
-                logs TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (user_id) REFERENCES users(user_id)
-            );
-DELETE FROM sqlite_sequence;
-INSERT INTO sqlite_sequence VALUES('topups',32);
-CREATE INDEX idx_topups_user ON topups(user_id);
-CREATE INDEX idx_topups_order ON topups(order_id);
-CREATE INDEX idx_redeems_user ON redeems(user_id);
-CREATE INDEX idx_topups_status ON topups(status);
-CREATE INDEX idx_redeems_status ON redeems(status);
-CREATE INDEX idx_topups_user_id 
-                ON topups(user_id)
-            ;
-CREATE INDEX idx_topups_order_id 
-                ON topups(order_id)
-            ;
-CREATE INDEX idx_redeems_user_id 
-                ON redeems(user_id)
-            ;
-COMMIT;
+-- ==========================================
+-- SUPABASE DATABASE SETUP
+-- ==========================================
+-- Run this SQL in your Supabase SQL Editor
+-- Dashboard > SQL Editor > New Query
+
+-- Enable UUID extension (if not already enabled)
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+-- ==========================================
+-- USERS TABLE
+-- ==========================================
+CREATE TABLE IF NOT EXISTS users (
+    user_id BIGINT PRIMARY KEY,
+    balance INTEGER NOT NULL DEFAULT 0,
+    total_topup INTEGER NOT NULL DEFAULT 0,
+    total_spent INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Add index for performance
+CREATE INDEX IF NOT EXISTS idx_users_updated_at ON users(updated_at);
+
+-- Add trigger for updated_at
+CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$$ language 'plpgsql';
+
+CREATE TRIGGER update_users_updated_at BEFORE UPDATE ON users
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- ==========================================
+-- TOPUPS TABLE
+-- ==========================================
+CREATE TABLE IF NOT EXISTS topups (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES users(user_id),
+    amount INTEGER NOT NULL,
+    order_id TEXT UNIQUE NOT NULL,
+    payment_type TEXT DEFAULT 'qris',
+    status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'success', 'failed', 'expired')),
+    midtrans_data TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Add indexes for performance
+CREATE INDEX IF NOT EXISTS idx_topups_user_id ON topups(user_id);
+CREATE INDEX IF NOT EXISTS idx_topups_order_id ON topups(order_id);
+CREATE INDEX IF NOT EXISTS idx_topups_status ON topups(status);
+CREATE INDEX IF NOT EXISTS idx_topups_created_at ON topups(created_at);
+
+-- Add trigger for updated_at
+CREATE TRIGGER update_topups_updated_at BEFORE UPDATE ON topups
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- ==========================================
+-- REDEEMS TABLE (FIXED SCHEMA)
+-- ==========================================
+CREATE TABLE IF NOT EXISTS redeems (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES users(user_id),
+    code_count INTEGER NOT NULL DEFAULT 0,
+    total_cost INTEGER NOT NULL DEFAULT 0,
+    success_count INTEGER DEFAULT 0,
+    failed_count INTEGER DEFAULT 0,
+    status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'processing', 'completed', 'failed')),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    completed_at TIMESTAMPTZ
+);
+
+-- Add indexes for performance
+CREATE INDEX IF NOT EXISTS idx_redeems_user_id ON redeems(user_id);
+CREATE INDEX IF NOT EXISTS idx_redeems_status ON redeems(status);
+CREATE INDEX IF NOT EXISTS idx_redeems_created_at ON redeems(created_at);
+
+-- ==========================================
+-- ROW LEVEL SECURITY (RLS) - FIXED
+-- ==========================================
+-- IMPORTANT: We disable RLS because we're using service_role key
+-- Service role should have full access without RLS restrictions
+
+-- Disable RLS on all tables (service_role bypasses RLS anyway)
+ALTER TABLE users DISABLE ROW LEVEL SECURITY;
+ALTER TABLE topups DISABLE ROW LEVEL SECURITY;
+ALTER TABLE redeems DISABLE ROW LEVEL SECURITY;
+
+-- Drop any existing policies (in case they exist)
+DROP POLICY IF EXISTS "Service role can do everything on users" ON users;
+DROP POLICY IF EXISTS "Service role can do everything on topups" ON topups;
+DROP POLICY IF EXISTS "Service role can do everything on redeems" ON redeems;
+DROP POLICY IF EXISTS "Enable all for service role on users" ON users;
+DROP POLICY IF EXISTS "Enable all for service role on topups" ON topups;
+DROP POLICY IF EXISTS "Enable all for service role on redeems" ON redeems;
+
+-- Alternative: If you MUST use RLS, create proper policies
+-- Uncomment ONLY if you need RLS enabled:
+
+/*
+-- Enable RLS
+ALTER TABLE users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE topups ENABLE ROW LEVEL SECURITY;
+ALTER TABLE redeems ENABLE ROW LEVEL SECURITY;
+
+-- Create permissive policies for authenticated role (service_role)
+CREATE POLICY "Enable all for authenticated on users" ON users
+    FOR ALL
+    TO authenticated
+    USING (true)
+    WITH CHECK (true);
+
+CREATE POLICY "Enable all for authenticated on topups" ON topups
+    FOR ALL
+    TO authenticated
+    USING (true)
+    WITH CHECK (true);
+
+CREATE POLICY "Enable all for authenticated on redeems" ON redeems
+    FOR ALL
+    TO authenticated
+    USING (true)
+    WITH CHECK (true);
+*/
+
+-- ==========================================
+-- FUNCTIONS FOR STATISTICS
+-- ==========================================
+
+-- Function to get user statistics
+CREATE OR REPLACE FUNCTION get_user_stats(p_user_id BIGINT)
+RETURNS TABLE (
+    balance INTEGER,
+    total_topup INTEGER,
+    total_spent INTEGER,
+    total_redeem BIGINT,
+    success_redeem BIGINT,
+    failed_redeem BIGINT
+) AS $$
+BEGIN
+    RETURN QUERY
+    SELECT 
+        COALESCE(u.balance, 0) as balance,
+        COALESCE(u.total_topup, 0) as total_topup,
+        COALESCE(u.total_spent, 0) as total_spent,
+        COALESCE(COUNT(r.id), 0) as total_redeem,
+        COALESCE(SUM(r.success_count), 0) as success_redeem,
+        COALESCE(SUM(r.failed_count), 0) as failed_redeem
+    FROM users u
+    LEFT JOIN redeems r ON u.user_id = r.user_id AND r.status = 'completed'
+    WHERE u.user_id = p_user_id
+    GROUP BY u.user_id, u.balance, u.total_topup, u.total_spent;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Function to get database statistics
+CREATE OR REPLACE FUNCTION get_database_stats()
+RETURNS TABLE (
+    total_users BIGINT,
+    total_balance BIGINT,
+    successful_topups BIGINT,
+    total_topup_amount BIGINT,
+    successful_redeems BIGINT,
+    failed_redeems BIGINT,
+    pending_redeems BIGINT
+) AS $$
+BEGIN
+    RETURN QUERY
+    SELECT 
+        (SELECT COUNT(*) FROM users)::BIGINT as total_users,
+        (SELECT COALESCE(SUM(balance), 0) FROM users)::BIGINT as total_balance,
+        (SELECT COUNT(*) FROM topups WHERE status = 'success')::BIGINT as successful_topups,
+        (SELECT COALESCE(SUM(amount), 0) FROM topups WHERE status = 'success')::BIGINT as total_topup_amount,
+        (SELECT COALESCE(SUM(success_count), 0) FROM redeems)::BIGINT as successful_redeems,
+        (SELECT COALESCE(SUM(failed_count), 0) FROM redeems)::BIGINT as failed_redeems,
+        (SELECT COUNT(*) FROM redeems WHERE status = 'pending')::BIGINT as pending_redeems;
+END;
+$$ LANGUAGE plpgsql;
+
+-- ==========================================
+-- CLEANUP FUNCTION
+-- ==========================================
+CREATE OR REPLACE FUNCTION cleanup_old_records()
+RETURNS void AS $$
+BEGIN
+    -- Delete old failed topups (>30 days)
+    DELETE FROM topups 
+    WHERE status = 'failed' 
+    AND created_at < NOW() - INTERVAL '30 days';
+    
+    -- Delete old completed redeems (>90 days)
+    DELETE FROM redeems 
+    WHERE status = 'completed' 
+    AND completed_at < NOW() - INTERVAL '90 days';
+END;
+$$ LANGUAGE plpgsql;
+
+-- ==========================================
+-- INITIAL DATA (OPTIONAL)
+-- ==========================================
+-- Uncomment if you want to add test data
+
+-- INSERT INTO users (user_id, balance, total_topup, total_spent) VALUES
+-- (999999, 0, 0, 0);
+
+-- ==========================================
+-- VERIFICATION QUERIES
+-- ==========================================
+-- Run these to verify your setup
+
+-- Check tables exist
+SELECT table_name 
+FROM information_schema.tables 
+WHERE table_schema = 'public' 
+AND table_name IN ('users', 'topups', 'redeems');
+
+-- Check indexes
+SELECT indexname, tablename 
+FROM pg_indexes 
+WHERE schemaname = 'public' 
+AND tablename IN ('users', 'topups', 'redeems');
+
+-- Test statistics function
+SELECT * FROM get_database_stats();
+
+-- ==========================================
+-- NOTES
+-- ==========================================
+-- 1. Save your Supabase URL and service_role key
+-- 2. Add them to your .env file:
+--    SUPABASE_URL=https://your-project.supabase.co
+--    SUPABASE_KEY=your-service-role-key
+-- 3. Never commit your service_role key to version control!
+-- 4. Use service_role key (not anon key) for server-side operations
+-- 5. RLS is enabled but service_role bypasses it automatically

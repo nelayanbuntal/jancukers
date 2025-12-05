@@ -11,7 +11,7 @@ import traceback
 # Import modules
 from redeem_core import run_redeem_process, load_codes
 import config
-from database_supabase import (
+from database import (
     init_database, get_balance, deduct_balance, 
     create_redeem, get_user_stats, get_topup_by_order_id,
     create_topup, get_redeem_queue_count, get_database_stats
@@ -1821,7 +1821,7 @@ async def admin_addbalance(interaction: Interaction, user: discord.Member, amoun
         if amount > 100000000:
             return await interaction.response.send_message("⚠️ Jumlah terlalu besar! Maksimal Rp 100.000.000 per transaksi.", ephemeral=True)
 
-        from database_supabase import add_balance
+        from database import add_balance
         new_balance = add_balance(user.id, amount)
 
         embed = discord.Embed(

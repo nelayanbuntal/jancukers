@@ -5,7 +5,7 @@ Modul command khusus admin dengan error handling dan professional messaging
 
 import discord
 from discord.ext import commands
-from database_supabase import get_user_stats, get_topup_by_order_id, get_balance, add_balance
+from database import get_user_stats, get_topup_by_order_id, get_balance, add_balance
 from payment_gateway import format_rupiah
 import config
 import traceback
@@ -164,7 +164,7 @@ def setup_admin_commands(bot: commands.Bot):
         Usage: !botstats
         """
         try:
-            from database_supabase import get_redeem_queue_count, get_database_stats
+            from database import get_redeem_queue_count, get_database_stats
             
             stats = get_database_stats()
 

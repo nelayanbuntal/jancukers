@@ -12,6 +12,21 @@ ADMIN_ROLE_NAME = os.getenv('ADMIN_ROLE_NAME', 'Admin')
 PUBLIC_CHANNEL_ID = int(os.getenv('PUBLIC_CHANNEL_ID', '1443997759479877683'))
 
 # ==========================================
+# SUPABASE CONFIG (NEW)
+# ==========================================
+SUPABASE_URL = os.getenv('SUPABASE_URL', '')
+SUPABASE_KEY = os.getenv('SUPABASE_KEY', '')  # Use service_role key
+
+# Database mode selection
+USE_SUPABASE = os.getenv('USE_SUPABASE', 'True').lower() == 'true'
+
+# Legacy SQLite config (for backward compatibility)
+DB_FILE = os.getenv('DB_FILE', 'bot_database.db')
+DB_MAX_RETRY_ATTEMPTS = int(os.getenv('DB_MAX_RETRY_ATTEMPTS', '5'))
+DB_RETRY_DELAY = float(os.getenv('DB_RETRY_DELAY', '0.1'))
+DB_TIMEOUT = int(os.getenv('DB_TIMEOUT', '30'))
+
+# ==========================================
 # MIDTRANS CONFIG
 # ==========================================
 MIDTRANS_SERVER_KEY = os.getenv('MIDTRANS_SERVER_KEY', 'YOUR_MIDTRANS_SERVER_KEY')
@@ -140,27 +155,13 @@ AUTO_CLOSE_WARNING_BEFORE = int(os.getenv('AUTO_CLOSE_WARNING_BEFORE', '600'))
 AUTO_CLOSE_CHECK_INTERVAL = int(os.getenv('AUTO_CLOSE_CHECK_INTERVAL', '300'))
 
 # ==========================================
-# DATABASE CONFIG
+# LOGGING CONFIG
 # ==========================================
-DB_FILE = os.getenv('DB_FILE', 'bot_database.db')
-
-# Database retry configuration
-DB_MAX_RETRY_ATTEMPTS = int(os.getenv('DB_MAX_RETRY_ATTEMPTS', '5'))
-DB_RETRY_DELAY = float(os.getenv('DB_RETRY_DELAY', '0.1'))
-DB_TIMEOUT = int(os.getenv('DB_TIMEOUT', '30'))
-
-# ==========================================
-# LOGGING CONFIG (NEW - ENHANCED)
-# ==========================================
-LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO')  # DEBUG, INFO, WARNING, ERROR, CRITICAL
-LOG_TO_FILE = os.getenv('LOG_TO_FILE', 'True').lower() == 'true'  # Changed default to True
+LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO')
+LOG_TO_FILE = os.getenv('LOG_TO_FILE', 'True').lower() == 'true'
 LOG_FILE = os.getenv('LOG_FILE', 'bot.log')
-LOG_MAX_SIZE = int(os.getenv('LOG_MAX_SIZE', '10485760'))  # 10MB
-
-# Log rotation settings
-LOG_BACKUP_COUNT = int(os.getenv('LOG_BACKUP_COUNT', '5'))  # Keep 5 old log files
-
-# Log format
+LOG_MAX_SIZE = int(os.getenv('LOG_MAX_SIZE', '10485760'))
+LOG_BACKUP_COUNT = int(os.getenv('LOG_BACKUP_COUNT', '5'))
 LOG_FORMAT = os.getenv('LOG_FORMAT', '%(asctime)s | %(levelname)-8s | %(message)s')
 LOG_DATE_FORMAT = os.getenv('LOG_DATE_FORMAT', '%Y-%m-%d %H:%M:%S')
 
@@ -185,6 +186,15 @@ def validate_config():
     # Check Midtrans Key
     if MIDTRANS_SERVER_KEY == 'YOUR_MIDTRANS_SERVER_KEY':
         errors.append("❌ MIDTRANS_SERVER_KEY belum di-set di .env")
+
+    # Check Supabase (if enabled)
+    if USE_SUPABASE:
+        if not SUPABASE_URL or SUPABASE_URL == '':
+            errors.append("❌ SUPABASE_URL belum di-set di .env")
+        if not SUPABASE_KEY or SUPABASE_KEY == '':
+            errors.append("❌ SUPABASE_KEY belum di-set di .env")
+    else:
+        warnings.append("⚠️ Menggunakan SQLite (USE_SUPABASE=False)")
 
     # Check Public Channel ID
     if PUBLIC_CHANNEL_ID == 0:
@@ -216,7 +226,7 @@ def validate_config():
         warnings.append("⚠️ MAX_SESSION_TIME sebaiknya antara 10-120 menit")
 
     # Check Database Config
-    if DB_TIMEOUT < 10:
+    if not USE_SUPABASE and DB_TIMEOUT < 10:
         warnings.append("⚠️ DB_TIMEOUT sebaiknya minimal 10 detik")
 
     # Check Logging Config
@@ -246,7 +256,7 @@ def validate_config():
 def print_config():
     """Print konfigurasi saat startup"""
     print("\n" + "="*50)
-    print("⚙️ KONFIGURASI BOT v2.3 (PRODUCTION)")
+    print("⚙️ KONFIGURASI BOT v3.0 (SUPABASE)")
     print("="*50)
     
     # Discord Config
@@ -254,6 +264,16 @@ def print_config():
     print(f"  Token: {'✅ Set' if DISCORD_TOKEN != 'YOUR_DISCORD_BOT_TOKEN' else '❌ Not Set'}")
     print(f"  Admin Role: {ADMIN_ROLE_NAME}")
     print(f"  Public Channel ID: {PUBLIC_CHANNEL_ID}")
+    
+    # Database Config (NEW)
+    print(f"\n💾 DATABASE:")
+    print(f"  Mode: {'🟢 Supabase' if USE_SUPABASE else '🔵 SQLite'}")
+    if USE_SUPABASE:
+        print(f"  URL: {'✅ Set' if SUPABASE_URL else '❌ Not Set'}")
+        print(f"  Key: {'✅ Set' if SUPABASE_KEY else '❌ Not Set'}")
+    else:
+        print(f"  File: {DB_FILE}")
+        print(f"  Timeout: {DB_TIMEOUT}s")
     
     # Midtrans Config
     print(f"\n💳 MIDTRANS:")
@@ -296,13 +316,7 @@ def print_config():
     print(f"  Data Masking: {'✅ Enabled' if ENABLE_SENSITIVE_DATA_MASKING else '❌ Disabled'}")
     print(f"  Mask Characters: {MASK_SHOW_CHARACTERS}")
     
-    # Database
-    print(f"\n💾 DATABASE:")
-    print(f"  File: {DB_FILE}")
-    print(f"  Timeout: {DB_TIMEOUT}s")
-    print(f"  Max Retry: {DB_MAX_RETRY_ATTEMPTS}")
-    
-    # Logging (NEW)
+    # Logging
     print(f"\n📝 LOGGING:")
     print(f"  Level: {LOG_LEVEL}")
     print(f"  To File: {'✅ Enabled' if LOG_TO_FILE else '❌ Disabled'}")
