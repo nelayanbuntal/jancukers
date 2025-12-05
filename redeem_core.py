@@ -1,12 +1,7 @@
 """
-Simplified Redeem Core Module v2.3
-===================================
-Enhanced with:
-- User-friendly messages
-- Production logging
-- Better error handling
-
-Version: 2.3 (Production Ready)
+Enhanced Redeem Core with Informative Response Messages
+=========================================================
+Version: 2.4 (Enhanced Logging)
 """
 
 import time
@@ -36,7 +31,6 @@ import config
 try:
     from logger import logger, ErrorCategory
 except ImportError:
-    # Fallback if logger not available
     class FallbackLogger:
         def info(self, msg, **kwargs): print(f"ℹ️ {msg}")
         def warning(self, msg, **kwargs): print(f"⚠️ {msg}")
@@ -46,6 +40,35 @@ except ImportError:
         def log_redeem_attempt(self, *args, **kwargs): pass
     logger = FallbackLogger()
     ErrorCategory = None
+
+# Import response parser
+try:
+    from response_handler import ResponseParser, ResponseCategorizer, REGION_CODE_MAP
+except ImportError:
+    # Fallback if response_handler not available
+    REGION_CODE_MAP = {
+        'hk2': 'HK2', 'hk': 'HK', 'th': 'TH',
+        'sg': 'SG', 'tw': 'TW', 'us': 'US'
+    }
+    
+    class ResponseParser:
+        @staticmethod
+        def format_log_message(code, region_key, response_msg, attempt=None):
+            masked = f"{code[:4]}-****-{code[-4:]}" if len(code) > 8 else f"{code[:4]}****"
+            region_code = REGION_CODE_MAP.get(region_key.lower(), region_key.upper())
+            return f"Kode {masked} → {region_code} : {response_msg[:30]}"
+        
+        @staticmethod
+        def get_emoji_for_response(msg):
+            return '✅' if 'success' in msg.lower() else '❌'
+    
+    class ResponseCategorizer:
+        @staticmethod
+        def categorize(msg): return 'UNKNOWN'
+        @staticmethod
+        def should_retry(cat): return True
+        @staticmethod
+        def should_try_next_region(cat): return True
 
 # ==========================================
 # CONSTANTS
@@ -165,7 +188,7 @@ class ProgressTracker:
         )
 
 # ==========================================
-# LOGIN FUNCTION (USER-FRIENDLY VERSION)
+# LOGIN FUNCTION
 # ==========================================
 
 def login(email, password, progress_callback=None, user_id=None):
@@ -177,13 +200,11 @@ def login(email, password, progress_callback=None, user_id=None):
         if progress_callback:
             progress_callback("login", step)
         
-        # Log to system
         if is_error:
             logger.error(step, user_id=user_id)
         else:
             logger.debug(step, user_id=user_id)
 
-    # USER-FRIENDLY: Simple progress messages
     update_status("🔐 Memverifikasi akun CloudEmulator...")
     logger.info(f"Login attempt for: {mask_sensitive(email, 3)}", user_id=user_id)
 
@@ -205,7 +226,6 @@ def login(email, password, progress_callback=None, user_id=None):
         driver.get("https://www.cloudemulator.net/app/sign-in?channelCode=web")
         time.sleep(4)
 
-        # Handle Agree button
         try:
             agree_button = driver.find_element(By.XPATH, "//button[normalize-space(text())='Agree']")
             agree_button.click()
@@ -215,7 +235,6 @@ def login(email, password, progress_callback=None, user_id=None):
 
         time.sleep(2)
         
-        # Click email login button
         try:
             update_status("🔐 Mengisi informasi login...")
             email_btn = WebDriverWait(driver, 12).until(
@@ -230,7 +249,6 @@ def login(email, password, progress_callback=None, user_id=None):
 
         time.sleep(2)
         
-        # Fill email
         try:
             email_input = WebDriverWait(driver, 10).until(
                 EC.presence_of_element_located((By.XPATH, "//div[contains(@class, 'email')]/input"))
@@ -242,7 +260,6 @@ def login(email, password, progress_callback=None, user_id=None):
             update_status("❌ Gagal mengisi email", is_error=True)
             return None, None, None
 
-        # Fill password
         try:
             pass_input = WebDriverWait(driver, 10).until(
                 EC.presence_of_element_located((By.XPATH, "//div[contains(@class, 'password')]/input"))
@@ -254,7 +271,6 @@ def login(email, password, progress_callback=None, user_id=None):
             update_status("❌ Gagal mengisi password", is_error=True)
             return None, None, None
 
-        # Click sign in
         try:
             update_status("🔐 Memverifikasi kredensial...")
             login_btn = WebDriverWait(driver, 10).until(
@@ -270,7 +286,6 @@ def login(email, password, progress_callback=None, user_id=None):
         update_status("🔐 Menunggu konfirmasi login...")
         time.sleep(7)
 
-        # Read localStorage
         try:
             user_id_result = driver.execute_script("return localStorage.getItem('user_id');")
             session_id = driver.execute_script("return localStorage.getItem('session_id');")
@@ -306,18 +321,17 @@ def login(email, password, progress_callback=None, user_id=None):
             pass
 
 # ==========================================
-# REDEEM FUNCTION (SINGLE API CALL)
+# ENHANCED REDEEM FUNCTION
 # ==========================================
 
 def redeem_code(code_value, user_id_login, session_id, uuid, goods_json, user_id=None):
     """
-    Single API call to redeem code
+    Single API call to redeem code with detailed response
     
     Returns:
-        "success" - Code redeemed successfully
-        "invalid" - Code is invalid/already used
-        "error" - Network/timeout error (should retry same region)
-        str - Other response message (should try next region)
+        tuple: (status, response_message)
+        - status: "success", "invalid", "error"
+        - response_message: detailed API response
     """
     session = requests.Session()
     WIB = timezone(timedelta(hours=7))
@@ -361,27 +375,27 @@ def redeem_code(code_value, user_id_login, session_id, uuid, goods_json, user_id
         
         # Check for success
         if 'Assigned' in msg or 'success' in msg.lower():
-            return "success"
+            return ("success", msg)
         
         # Check for invalid
         if 'invalid' in msg.lower() or 'used' in msg.lower():
-            return "invalid"
+            return ("invalid", msg)
         
-        # Return actual message for unknown responses
-        return msg if msg else "unknown_response"
+        # Return with message for unknown responses
+        return ("unknown", msg if msg else "No response message")
     
     except requests.exceptions.Timeout:
         logger.warning(f"API timeout for code: {mask_sensitive(code_value, 4)}", user_id=user_id)
-        return "error"
+        return ("error", "Request timeout")
     except requests.exceptions.RequestException as e:
         logger.warning(f"API request error: {e}", user_id=user_id)
-        return "error"
+        return ("error", f"Network error: {str(e)[:50]}")
     except Exception as e:
         logger.error(f"Unexpected error in redeem_code: {e}", user_id=user_id)
-        return "error"
+        return ("error", f"System error: {str(e)[:50]}")
 
 # ==========================================
-# MAIN REDEEM PROCESS (USER-FRIENDLY VERSION)
+# MAIN REDEEM PROCESS WITH ENHANCED LOGGING
 # ==========================================
 
 def run_redeem_process(
@@ -394,22 +408,8 @@ def run_redeem_process(
     user_id=None,
     session_files=None
 ):
-    """
-    Main redeem process with user-friendly messages
+    """Main redeem process with enhanced informative logging"""
     
-    Args:
-        code_file: Path to file containing codes
-        email: CloudEmulator email
-        password: CloudEmulator password
-        region_input: Space-separated region codes (e.g. "hk sg tw")
-        android_version: Android version string or number
-        progress_callback: Callback function for progress updates
-        user_id: Discord user ID for logging
-        session_files: Dict with session file paths
-    
-    Returns:
-        dict: Result with success/failed counts
-    """
     if user_id is None:
         logger.error("run_redeem_process called without user_id")
         return {
@@ -528,80 +528,95 @@ def run_redeem_process(
 
     for idx, raw_code in enumerate(codes):
         clean_code = raw_code.replace("-", "").strip()
-        masked_code = mask_sensitive(raw_code, 4)
         
-        logger.debug(f"Processing code {idx+1}/{len(codes)}: {masked_code}", user_id=user_id)
+        logger.debug(f"Processing code {idx+1}/{len(codes)}", user_id=user_id)
         
         region_index = 0
         attempt = 0
         spinner_index = 0
         
-        # UNLIMITED RETRY LOOP
+        # UNLIMITED RETRY LOOP WITH ENHANCED LOGGING
         while True:
             attempt += 1
             region_key = regions[region_index]
             region_name = REGION_MAP[region_key]["name"]
             goods_json = goods_json_list[region_index]
             
-            # USER-FRIENDLY: Simple progress message
-            if progress_callback:
-                spinner_symbol = SPINNER[spinner_index % len(SPINNER)]
-                progress_callback("redeem", 
-                    f"- Kode {raw_code} → {region_name}..."
-                )
+            # Single API call with detailed response
+            status, response_msg = redeem_code(clean_code, user_id_login, session_id, uuid, goods_json, user_id)
             
-            # Single API call
-            result = redeem_code(clean_code, user_id_login, session_id, uuid, goods_json, user_id)
+            # Format log message with ResponseParser
+            formatted_log = ResponseParser.format_log_message(
+                raw_code, 
+                region_key, 
+                response_msg,
+                attempt if attempt > 1 else None
+            )
+            
+            # Get emoji for progress callback
+            emoji = ResponseParser.get_emoji_for_response(response_msg)
             
             # Log attempt
-            logger.log_redeem_attempt(clean_code, region_name, attempt, result, user_id=user_id)
+            logger.log_redeem_attempt(clean_code, region_name, attempt, status, user_id=user_id)
+            
+            # User-facing progress update
+            if progress_callback:
+                spinner_symbol = SPINNER[spinner_index % len(SPINNER)]
+                #progress_callback("redeem", f"{spinner_symbol} {formatted_log}")
             
             # Handle result
-            if result == "success":
-                logger.info(f"SUCCESS: {masked_code} on {region_name} (attempt {attempt})", user_id=user_id)
+            if status == "success":
+                logger.info(f"SUCCESS: {formatted_log}", user_id=user_id)
                 log_success(raw_code, success_file)
                 remove_code_safe(raw_code, code_file)
                 tracker.update(success=True)
                 
                 if progress_callback:
-                    progress_callback("redeem", 
-                        f"✅ Kode {masked_code} berhasil di-redeem!"
-                    )
+                    progress_callback("redeem", f"✅ {formatted_log}")
                 break
             
-            elif result == "invalid":
-                logger.warning(f"INVALID: {masked_code} (attempt {attempt})", user_id=user_id)
+            elif status == "invalid":
+                logger.warning(f"INVALID: {formatted_log}", user_id=user_id)
                 log_invalid(raw_code, invalid_file)
                 remove_code_safe(raw_code, code_file)
                 tracker.update(success=False)
                 
                 if progress_callback:
-                    progress_callback("redeem", 
-                        f"❌ Kode {masked_code} tidak valid atau sudah digunakan"
-                    )
+                    progress_callback("redeem", f"❌ {formatted_log}")
                 break
             
-            elif result == "error":
-                logger.warning(f"Network error on {region_name}, retrying", user_id=user_id)
+            elif status == "error":
+                logger.warning(f"ERROR: {formatted_log}", user_id=user_id)
                 
                 if progress_callback:
-                    progress_callback("redeem", 
-                        f"⚠️ Koneksi bermasalah, mencoba ulang..."
-                    )
+                    progress_callback("redeem", f"⚠️ {formatted_log}")
                 
                 if not config.SPEED_MODE:
                     time.sleep(random.uniform(2.0, 4.0))
                 
-                continue
+                continue  # Retry same region
             
             else:
-                logger.debug(f"Unknown response on {region_name}: {result[:50]}", user_id=user_id)
+                # Unknown response - use categorizer to decide
+                category = ResponseCategorizer.categorize(response_msg)
+                logger.debug(f"UNKNOWN ({category}): {formatted_log}", user_id=user_id)
                 
-                # Rotate to next region
-                region_index = (region_index + 1) % len(regions)
+                if progress_callback:
+                    progress_callback("redeem", f"❓ {formatted_log}")
                 
-                if region_index == 0:
-                    logger.debug(f"All regions tried for {masked_code}, cycling again", user_id=user_id)
+                # Decide whether to try next region based on category
+                if ResponseCategorizer.should_try_next_region(category):
+                    # Rotate to next region
+                    region_index = (region_index + 1) % len(regions)
+                    
+                    if region_index == 0:
+                        logger.debug(f"All regions tried, cycling again", user_id=user_id)
+                elif ResponseCategorizer.should_retry(category):
+                    # Retry same region
+                    logger.debug(f"Retrying same region", user_id=user_id)
+                else:
+                    # Unknown handling, try next region
+                    region_index = (region_index + 1) % len(regions)
                 
                 if not config.SPEED_MODE:
                     time.sleep(random.uniform(1.5, 3.5))
